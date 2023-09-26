@@ -181,11 +181,18 @@ def readCamerasFromTransforms(path, transformsfile, white_background, extension=
 
     with open(os.path.join(path, transformsfile)) as json_file:
         contents = json.load(json_file)
-        fovx = contents["camera_angle_x"]
+        if "camera_angle_x" in contents:
+            fovx = contents["camera_angle_x"]
+        else:
+            fovx = None
 
         frames = contents["frames"]
         for idx, frame in enumerate(frames):
-            cam_name = os.path.join(path, frame["file_path"] + extension)
+            file_path = frame["file_path"]
+            if file_path.endswith(".png") or file_path.endswith(".jpg"):
+                cam_name = os.path.join(path, frame["file_path"])
+            else:
+                cam_name = os.path.join(path, frame["file_path"] + extension)
 
             # NeRF 'transform_matrix' is a camera-to-world transform
             c2w = np.array(frame["transform_matrix"])
@@ -209,9 +216,19 @@ def readCamerasFromTransforms(path, transformsfile, white_background, extension=
             arr = norm_data[:,:,:3] * norm_data[:, :, 3:4] + bg * (1 - norm_data[:, :, 3:4])
             image = Image.fromarray(np.array(arr*255.0, dtype=np.byte), "RGB")
 
-            fovy = focal2fov(fov2focal(fovx, image.size[0]), image.size[1])
-            FovY = fovy 
-            FovX = fovx
+            if fovx is not None:
+                fovy = focal2fov(fov2focal(fovx, image.size[0]), image.size[1])
+                FovY = fovy
+                FovX = fovx
+            else:
+                fl_x = frame["fl_x"]
+                fl_y = frame["fl_y"]
+                h = frame["h"]
+                w = frame["w"]
+                fovx = focal2fov(fl_x, w)
+                fovy = focal2fov(fl_y, h)
+                FovY = fovy
+                FovX = fovx
 
             cam_infos.append(CameraInfo(uid=idx, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
                             image_path=image_path, image_name=image_name, width=image.size[0], height=image.size[1]))
@@ -219,10 +236,15 @@ def readCamerasFromTransforms(path, transformsfile, white_background, extension=
     return cam_infos
 
 def readNerfSyntheticInfo(path, white_background, eval, extension=".png"):
-    print("Reading Training Transforms")
-    train_cam_infos = readCamerasFromTransforms(path, "transforms_train.json", white_background, extension)
-    print("Reading Test Transforms")
-    test_cam_infos = readCamerasFromTransforms(path, "transforms_test.json", white_background, extension)
+    try:
+        print("Reading Training Transforms")
+        train_cam_infos = readCamerasFromTransforms(path, "transforms_train.json", white_background, extension)
+        print("Reading Test Transforms")
+        test_cam_infos = readCamerasFromTransforms(path, "transforms_test.json", white_background, extension)
+    except:
+        print("Training or testing transforms not found, reading all transforms from transforms.json")
+        train_cam_infos = readCamerasFromTransforms(path, "transforms.json", white_background, extension)
+        test_cam_infos = []
     
     if not eval:
         train_cam_infos.extend(test_cam_infos)
