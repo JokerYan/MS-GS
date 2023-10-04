@@ -13,6 +13,7 @@ import os
 import logging
 from argparse import ArgumentParser
 import shutil
+import cv2
 
 # This Python script is based on the shell converter script provided in the MipNerF 360 repository.
 parser = ArgumentParser("Colmap converter")
@@ -23,10 +24,37 @@ parser.add_argument("--camera", default="OPENCV", type=str)
 parser.add_argument("--colmap_executable", default="", type=str)
 parser.add_argument("--resize", action="store_true")
 parser.add_argument("--magick_executable", default="", type=str)
+parser.add_argument("--target_length", "-l", default=0, type=int)
 args = parser.parse_args()
 colmap_command = '"{}"'.format(args.colmap_executable) if len(args.colmap_executable) > 0 else "colmap"
 magick_command = '"{}"'.format(args.magick_executable) if len(args.magick_executable) > 0 else "magick"
 use_gpu = 1 if not args.no_gpu else 0
+
+# extract images from video
+if args.source_path.endswith(".mp4") or args.source_path.endswith(".MOV"):
+    # load video
+    vidcap = cv2.VideoCapture(args.source_path)
+    if args.target_length > 0:
+        # get video length
+        length = int(vidcap.get(cv2.CAP_PROP_FRAME_COUNT))
+        # calculate skip
+        frame_skip = int(length / args.target_length)
+    else:
+        frame_skip = 1
+
+    success, image = vidcap.read()
+    total_count, accept_count = 0, 0
+    source_dir = os.path.dirname(args.source_path)
+    input_dir = os.path.join(source_dir, "input")
+    os.makedirs(input_dir, exist_ok=True)
+    while success:
+        if total_count % frame_skip == 0:
+            cv2.imwrite(os.path.join(input_dir, f"frame_{total_count:04d}.jpg"), image)
+            accept_count += 1
+        success, image = vidcap.read()
+        total_count += 1
+    print(f"loaded {accept_count} frames from video.")
+    args.source_path = source_dir
 
 if not args.skip_matching:
     os.makedirs(args.source_path + "/distorted/sparse", exist_ok=True)
