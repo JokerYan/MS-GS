@@ -10,6 +10,8 @@
 #
 
 import os
+import time
+
 import torch
 from random import randint
 from utils.loss_utils import l1_loss, ssim
@@ -28,12 +30,21 @@ try:
 except ImportError:
     TENSORBOARD_FOUND = False
 
+
+max_reso_pow = 5
+train_reso_scales = [2**i for i in range(max_reso_pow + 1)]        # 1~32
+test_reso_scales = train_reso_scales + [(2**i + 2**(i+1)) / 2 for i in range(max_reso_pow)]     # 1~32, include half scales
+test_reso_scales = sorted(test_reso_scales)
+full_reso_scales = sorted(list(set(train_reso_scales + test_reso_scales)))
+print('train_reso_scales', train_reso_scales)
+print('test_reso_scales', test_reso_scales)
+print('full_reso_scales', full_reso_scales)
+
 def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from):
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
     gaussians = GaussianModel(dataset.sh_degree)
-    resolution_scales = [1.0, 2.0, 4.0, 8.0]
-    scene = Scene(dataset, gaussians, resolution_scales=resolution_scales)
+    scene = Scene(dataset, gaussians, resolution_scales=full_reso_scales)
     gaussians.training_setup(opt)
     if checkpoint:
         (model_params, first_iter) = torch.load(checkpoint)
@@ -75,7 +86,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         # Pick a random Camera
         if not viewpoint_stack:
-            resolution_scale = resolution_scales[randint(0, len(resolution_scales)-1)]
+            resolution_scale = train_reso_scales[randint(0, len(train_reso_scales)-1)]
+            # resolution_scale = 1.0  # use the highest resolution only
             viewpoint_stack = scene.getTrainCameras(resolution_scale).copy()
         viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
 
@@ -161,28 +173,49 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
     # Report test and samples of training set
     if iteration in testing_iterations:
         torch.cuda.empty_cache()
-        validation_configs = ({'name': 'test', 'cameras' : scene.getTestCameras()}, 
-                              {'name': 'train', 'cameras' : [scene.getTrainCameras()[idx % len(scene.getTrainCameras())] for idx in range(5, 30, 5)]})
+        validation_configs = []
+        for reso_scale in test_reso_scales:
+            validation_configs.append({
+                'name': 'test', 'cameras': scene.getTestCameras(reso_scale), 'scale': reso_scale
+            })
+        for reso_scale in train_reso_scales:
+            validation_configs.append({
+                'name': 'train', 'cameras': [scene.getTrainCameras(reso_scale)[idx % len(scene.getTrainCameras())] for idx in range(5, 30, 5)],
+                'scale': reso_scale
+            })
+        # validation_configs = ({'name': 'test', 'cameras' : scene.getTestCameras(reso_scale)},
+        #                       {'name': 'train', 'cameras' : [scene.getTrainCameras(reso_scale)[idx % len(scene.getTrainCameras())] for idx in range(5, 30, 5)]})
 
         for config in validation_configs:
+            reso_scale = config['scale']
             if config['cameras'] and len(config['cameras']) > 0:
                 l1_test = 0.0
                 psnr_test = 0.0
+                render_time = 0.0
                 for idx, viewpoint in enumerate(config['cameras']):
+                    start_time = time.time()
                     image = torch.clamp(renderFunc(viewpoint, scene.gaussians, *renderArgs)["render"], 0.0, 1.0)
+                    render_time += time.time() - start_time
+
                     gt_image = torch.clamp(viewpoint.original_image.to("cuda"), 0.0, 1.0)
                     if tb_writer and (idx < 5):
-                        tb_writer.add_images(config['name'] + "_view_{}/render".format(viewpoint.image_name), image[None], global_step=iteration)
+                        tb_writer.add_images(
+                            f"{config['name']}_s{reso_scale:.1f}_view_{viewpoint.image_name}/render",
+                            image[None], global_step=iteration)
                         if iteration == testing_iterations[0]:
-                            tb_writer.add_images(config['name'] + "_view_{}/ground_truth".format(viewpoint.image_name), gt_image[None], global_step=iteration)
+                            tb_writer.add_images(
+                                f"{config['name']}_s{reso_scale:.1f}_view_{viewpoint.image_name}/ground_truth",
+                                gt_image[None], global_step=iteration)
                     l1_test += l1_loss(image, gt_image).mean().double()
                     psnr_test += psnr(image, gt_image).mean().double()
                 psnr_test /= len(config['cameras'])
-                l1_test /= len(config['cameras'])          
-                print("\n[ITER {}] Evaluating {}: L1 {} PSNR {}".format(iteration, config['name'], l1_test, psnr_test))
+                l1_test /= len(config['cameras'])
+                render_time /= len(config['cameras'])
+                print(f"\n[ITER {iteration}] Evaluating {config['name']} s{reso_scale:.1f}: L1 {l1_test} PSNR {psnr_test}")
                 if tb_writer:
-                    tb_writer.add_scalar(config['name'] + '/loss_viewpoint - l1_loss', l1_test, iteration)
-                    tb_writer.add_scalar(config['name'] + '/loss_viewpoint - psnr', psnr_test, iteration)
+                    tb_writer.add_scalar(f"{config['name']}/s{reso_scale:.1f}_loss_viewpoint - l1_loss", l1_test, iteration)
+                    tb_writer.add_scalar(f"{config['name']}/s{reso_scale:.1f}_loss_viewpoint - psnr", psnr_test, iteration)
+                    tb_writer.add_scalar(f"{config['name']}/s{reso_scale:.1f}_loss_viewpoint - render_time", render_time, iteration)
 
         if tb_writer:
             tb_writer.add_histogram("scene/opacity_histogram", scene.gaussians.get_opacity, iteration)
