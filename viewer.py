@@ -67,7 +67,9 @@ def render_interactive(dataset: ModelParams, iteration: int, pipeline: PipelineP
             torch.cuda.synchronize()
             time_start = time.time()
 
-            rendering = render(view, gaussians, pipeline, background, scaling_modifier=gs_scale)["render"]
+            results = render(view, gaussians, pipeline, background, scaling_modifier=gs_scale)
+            rendering = results["render"]
+            acc_pixel_size = results["acc_pixel_size"]
 
             torch.cuda.synchronize()
             render_time = time.time() - time_start
@@ -75,8 +77,15 @@ def render_interactive(dataset: ModelParams, iteration: int, pipeline: PipelineP
             rendering = torch.permute(rendering, (1, 2, 0))    # HWC
             rendering = rendering.cpu().numpy()
             rendering = cv2.cvtColor(rendering, cv2.COLOR_RGB2BGR)
+
+            # normalize acc_pixel_size
+            acc_pixel_size = torch.clip(acc_pixel_size / 10, 0, 1)
+            acc_pixel_size = acc_pixel_size.cpu().numpy()
+
             cv2.imshow("rendering", rendering)
             cv2.setWindowTitle("rendering", f"{render_time * 1000:.2f}ms")
+            cv2.imshow("acc_pixel_size", acc_pixel_size)
+
             key = cv2.waitKey(0)
             if key == ord('q'):
                 break
