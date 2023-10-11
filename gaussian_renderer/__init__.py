@@ -82,7 +82,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         colors_precomp = override_color
 
     # Rasterize visible Gaussians to image, obtain their radii (on screen). 
-    rendered_image, acc_pixel_size, radii = rasterizer(
+    rendered_image, acc_pixel_size, depth, radii = rasterizer(
         means3D = means3D,
         means2D = means2D,
         shs = shs,
@@ -96,6 +96,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     # They will be excluded from value updates used in the splitting criteria.
     return {"render": rendered_image,
             "acc_pixel_size": acc_pixel_size,
+            "depth": depth,
             "viewspace_points": screenspace_points,
             "visibility_filter" : radii > 0,
             "radii": radii}

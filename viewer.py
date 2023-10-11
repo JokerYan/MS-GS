@@ -70,6 +70,7 @@ def render_interactive(dataset: ModelParams, iteration: int, pipeline: PipelineP
             results = render(view, gaussians, pipeline, background, scaling_modifier=gs_scale)
             rendering = results["render"]
             acc_pixel_size = results["acc_pixel_size"]
+            depth = results["depth"]
 
             torch.cuda.synchronize()
             render_time = time.time() - time_start
@@ -82,9 +83,14 @@ def render_interactive(dataset: ModelParams, iteration: int, pipeline: PipelineP
             acc_pixel_size = torch.clip(acc_pixel_size / 10, 0, 1)
             acc_pixel_size = acc_pixel_size.cpu().numpy()
 
+            # normalize depth
+            depth = torch.clip(depth / torch.max(depth), 0, 1)
+            depth = depth.cpu().numpy()
+
             cv2.imshow("rendering", rendering)
             cv2.setWindowTitle("rendering", f"{render_time * 1000:.2f}ms")
             cv2.imshow("acc_pixel_size", acc_pixel_size)
+            cv2.imshow("depth", depth)
 
             key = cv2.waitKey(0)
             if key == ord('q'):
