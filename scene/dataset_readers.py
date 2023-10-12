@@ -11,17 +11,19 @@
 
 import os
 import sys
-from PIL import Image
 from typing import NamedTuple
+
+from PIL import Image
 from scene.colmap_loader import read_extrinsics_text, read_intrinsics_text, qvec2rotmat, \
     read_extrinsics_binary, read_intrinsics_binary, read_points3D_binary, read_points3D_text
-from utils.graphics_utils import getWorld2View2, focal2fov, fov2focal
+from utils.graphics_utils import getWorld2View2, focal2fov, fov2focal, BasicPointCloud
 import numpy as np
 import json
 from pathlib import Path
 from plyfile import PlyData, PlyElement
 from utils.sh_utils import SH2RGB
 from scene.gaussian_model import BasicPointCloud
+
 
 class CameraInfo(NamedTuple):
     uid: int
@@ -34,6 +36,7 @@ class CameraInfo(NamedTuple):
     image_name: str
     width: int
     height: int
+
 
 class SceneInfo(NamedTuple):
     point_cloud: BasicPointCloud
@@ -231,7 +234,7 @@ def readCamerasFromTransforms(path, transformsfile, white_background, extension=
                 FovX = fovx
 
             cam_infos.append(CameraInfo(uid=idx, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
-                            image_path=image_path, image_name=image_name, width=image.size[0], height=image.size[1]))
+                                        image_path=image_path, image_name=image_name, width=image.size[0], height=image.size[1]))
             
     return cam_infos
 

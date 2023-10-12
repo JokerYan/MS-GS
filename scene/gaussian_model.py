@@ -8,17 +8,22 @@
 #
 # For inquiries contact  george.drettakis@inria.fr
 #
+import math
 
+import cv2
 import torch
 import numpy as np
+
+from scene.cameras import Camera
 from utils.general_utils import inverse_sigmoid, get_expon_lr_func, build_rotation
 from torch import nn
+import torch.nn.functional as F
 import os
 from utils.system_utils import mkdir_p
 from plyfile import PlyData, PlyElement
 from utils.sh_utils import RGB2SH
 from simple_knn._C import distCUDA2
-from utils.graphics_utils import BasicPointCloud
+from utils.graphics_utils import BasicPointCloud, getWorld2View
 from utils.general_utils import strip_symmetric, build_scaling_rotation
 
 class GaussianModel:
@@ -405,3 +410,85 @@ class GaussianModel:
     def add_densification_stats(self, viewspace_point_tensor, update_filter):
         self.xyz_gradient_accum[update_filter] += torch.norm(viewspace_point_tensor.grad[update_filter,:2], dim=-1, keepdim=True)
         self.denom[update_filter] += 1
+
+    def add_large_gaussian(self, camera: Camera, render_results):
+        rgb = render_results["render"]
+        acc_pixel_size = render_results["acc_pixel_size"]
+        depth = render_results["depth"]
+
+        # small pixel size mask
+        small_pixel_size_mask = acc_pixel_size < 3.0        # threshold slightly smaller than target size
+        # cv2.imshow("small_pixel_size_mask", small_pixel_size_mask.cpu().numpy().astype(np.float32))
+        # cv2.waitKey(0)
+
+        # avg pool to k x k
+        k = 4
+        small_pixel_size_mask = small_pixel_size_mask.float()
+        small_pixel_size_mask = small_pixel_size_mask[None, None, :, :]             # (1, 1, H, W)
+        small_pixel_size_mask = F.avg_pool2d(small_pixel_size_mask, kernel_size=k, stride=k, padding=0, ceil_mode=True)
+        small_pixel_size_mask = small_pixel_size_mask.squeeze(0).squeeze(0)         # (H, W)
+        small_pixel_size_mask = small_pixel_size_mask >= 0.75
+
+        small_depth = depth[None, None, :, :]             # (1, 1, H, W)
+        small_depth = F.avg_pool2d(small_depth, kernel_size=k, stride=k, padding=0, ceil_mode=True)
+        small_depth = small_depth.squeeze(0).squeeze(0)         # (H, W)
+
+        small_rgb = rgb[None, :, :, :]             # (1, 3, H, W)
+        small_rgb = F.avg_pool2d(small_rgb, kernel_size=k, stride=k, padding=0, ceil_mode=True)
+        small_rgb = small_rgb.squeeze(0)           # (3, H, W)
+        small_rgb = small_rgb.permute(1, 2, 0)      # (H, W, 3)
+
+        # convert mask to coordinates
+        ys, xs = torch.where(small_pixel_size_mask)
+        zs = small_depth[ys, xs]
+        rgb_pt = small_rgb[ys, xs, :]           # (N, 3)
+        if len(ys) == 0:
+            return False
+        ys = ys * k + k / 2 - 0.5       # convert back to orignal size coordinates
+        xs = xs * k + k / 2 - 0.5
+
+        # back project to 3d
+        fovx = camera.FoVx
+        fovy = camera.FoVy
+        H, W = camera.image_height, camera.image_width
+        cx = W / 2 - 0.5
+        cy = H / 2 - 0.5
+        half_x = math.tan(fovx / 2)
+        half_y = math.tan(fovy / 2)
+        xs = (xs - cx) / cx * half_x * zs
+        ys = (ys - cy) / cy * half_y * zs
+        coord = torch.stack([xs, ys, zs], dim=-1)
+        coord = torch.cat([coord, torch.ones_like(coord[..., :1])], dim=-1)     # homogeneous coordinates, N x 4
+
+        # calculate scale of each new gaussian
+        scale_x = half_x / (W / 2) * (k / 2)
+        scale_y = half_y / (H / 2) * (k / 2)
+        scale_x = scale_x * zs      # N
+        scale_y = scale_y * zs      # N
+        scale_z = torch.mean(torch.stack([scale_x, scale_y], dim=-1), dim=-1)     # N
+        new_scaling = torch.stack([scale_x, scale_y, scale_z], dim=-1)            # N x 3
+        new_scaling = self.scaling_inverse_activation(new_scaling)
+
+        # print("scale", torch.max(new_scaling), torch.min(new_scaling), torch.mean(self._scaling), torch.max(self._scaling), torch.min(self._scaling))
+        # print("depth", torch.min(zs), torch.max(zs))
+
+        # transform to world space
+        w2c = getWorld2View(camera.R, camera.T)
+        w2c = torch.from_numpy(w2c).to(device=coord.device)
+        c2w = torch.linalg.inv(w2c)                 # 4 x 4
+        coord = c2w @ coord.transpose(0, 1)         # 4 x N
+        coord = coord.transpose(0, 1)[:, :3]        # N x 3
+
+        # calculate attributes of gaussians
+        N = len(coord)
+        new_feature_dc = RGB2SH(rgb_pt[:, None, :])     # (N, 1, 3)
+        new_feature_rest = torch.zeros([N, (self.max_sh_degree + 1) ** 2 - 1, 3], device=coord.device)     # (N, 8, 3)
+        new_opacity = torch.ones([N, 1], device=coord.device) * 0.5       # (N, 1)
+        new_rotation = torch.zeros([N, 4], device=coord.device)       # (N, 4)
+
+        # max_idx = torch.argmax(torch.max(new_scaling, dim=1).values, dim=0)
+        # print("scale", new_scaling[max_idx], "color", new_feature_dc[max_idx])
+
+        # add new gaussian
+        self.densification_postfix(coord, new_feature_dc, new_feature_rest, new_opacity, new_scaling, new_rotation)
+        return True

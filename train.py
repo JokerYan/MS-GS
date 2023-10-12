@@ -12,6 +12,7 @@
 import os
 import time
 
+import cv2
 import torch
 from random import randint
 from utils.loss_utils import l1_loss, ssim
@@ -134,6 +135,32 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 
                 if iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
                     gaussians.reset_opacity()
+
+            # Add large gaussians
+            if iteration < 15000:
+                if iteration > 500 and iteration % 100 == 0:
+                    added_new = gaussians.add_large_gaussian(viewpoint_cam, render_pkg)
+                    #
+                    # if added_new and iteration >= 1000:
+                    #     last_image = image.clone()
+                    #     old_pixel_size = render_pkg["acc_pixel_size"] / 3.0
+                    #     old_pixel_size = torch.tile(old_pixel_size, (3, 1, 1))
+                    #     old_depth = render_pkg["depth"]
+                    #     render_pkg = render(viewpoint_cam, gaussians, pipe, background)
+                    #     new_image = render_pkg["render"]
+                    #     new_depth = render_pkg["depth"]
+                    #     max_depth = torch.maximum(torch.max(old_depth), torch.max(new_depth))
+                    #     old_depth = old_depth / max_depth
+                    #     new_depth = new_depth / max_depth
+                    #     old_depth = torch.tile(old_depth, (3, 1, 1))
+                    #     new_depth = torch.tile(new_depth, (3, 1, 1))
+                    #
+                    #     image = torch.cat((last_image, new_image, old_pixel_size, old_depth, new_depth), dim=-1)
+                    #     image = image.cpu().numpy()
+                    #     image = image.transpose(1, 2, 0)
+                    #     image = cv2.resize(image, (image.shape[1] * resolution_scale // 2, image.shape[0] * resolution_scale // 2), interpolation=cv2.INTER_NEAREST)
+                    #     cv2.imshow("image", image)
+                    #     cv2.waitKey(0)
 
             # Optimizer step
             if iteration < opt.iterations:
