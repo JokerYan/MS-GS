@@ -56,6 +56,7 @@ class GaussianModel:
         self._rotation = torch.empty(0)
         self._opacity = torch.empty(0)
         self.max_radii2D = torch.empty(0)
+        self.max_pixel_sizes = torch.empty(0)
         self.xyz_gradient_accum = torch.empty(0)
         self.denom = torch.empty(0)
         self.optimizer = None
@@ -73,6 +74,7 @@ class GaussianModel:
             self._rotation,
             self._opacity,
             self.max_radii2D,
+            self.max_pixel_sizes,
             self.xyz_gradient_accum,
             self.denom,
             self.optimizer.state_dict(),
@@ -87,8 +89,9 @@ class GaussianModel:
         self._scaling, 
         self._rotation, 
         self._opacity,
-        self.max_radii2D, 
-        xyz_gradient_accum, 
+        self.max_radii2D,
+        self.max_pixel_sizes,
+        xyz_gradient_accum,
         denom,
         opt_dict, 
         self.spatial_lr_scale) = model_args
@@ -150,6 +153,7 @@ class GaussianModel:
         self._rotation = nn.Parameter(rots.requires_grad_(True))
         self._opacity = nn.Parameter(opacities.requires_grad_(True))
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
+        self.max_pixel_sizes = torch.zeros((self.get_xyz.shape[0]), device="cuda")
 
     def training_setup(self, training_args):
         self.percent_dense = training_args.percent_dense
@@ -308,6 +312,7 @@ class GaussianModel:
 
         self.denom = self.denom[valid_points_mask]
         self.max_radii2D = self.max_radii2D[valid_points_mask]
+        self.max_pixel_sizes = self.max_pixel_sizes[valid_points_mask]
 
     def cat_tensors_to_optimizer(self, tensors_dict):
         optimizable_tensors = {}
@@ -350,6 +355,10 @@ class GaussianModel:
         self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         self.denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
+        # self.max_pixel_sizes = torch.zeros((self.get_xyz.shape[0]), device="cuda")
+        # need to add zeros at the back of the current max_pixel_sizes when doing densification
+        new_max_pixel_sizes = torch.zeros((len(new_xyz)), device="cuda")
+        self.max_pixel_sizes = torch.cat((self.max_pixel_sizes, new_max_pixel_sizes), dim=0)
 
     def densify_and_split(self, grads, grad_threshold, scene_extent, N=2):
         n_init_points = self.get_xyz.shape[0]
@@ -406,6 +415,16 @@ class GaussianModel:
         self.prune_points(prune_mask)
 
         torch.cuda.empty_cache()
+
+    def prune_small_points(self):
+        if torch.max(self.max_pixel_sizes) > 0:
+            prune_mask = self.max_pixel_sizes < 1.0
+            print(torch.min(self.max_pixel_sizes), torch.max(self.max_pixel_sizes), len(self.get_xyz), torch.sum(prune_mask.float()))
+            self.prune_points(prune_mask)
+            torch.cuda.empty_cache()
+        else:
+            print("max pixel sizes too small for purning")
+        self.max_pixel_sizes = torch.zeros((self.get_xyz.shape[0]), device="cuda")
 
     def add_densification_stats(self, viewspace_point_tensor, update_filter):
         self.xyz_gradient_accum[update_filter] += torch.norm(viewspace_point_tensor.grad[update_filter,:2], dim=-1, keepdim=True)

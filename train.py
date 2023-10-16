@@ -99,6 +99,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             pipe.debug = True
         render_pkg = render(viewpoint_cam, gaussians, pipe, background)
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
+        pixel_sizes = render_pkg["pixel_sizes"]
 
         # Loss
         gt_image = viewpoint_cam.original_image.cuda()
@@ -127,6 +128,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             if iteration < opt.densify_until_iter:
                 # Keep track of max radii in image-space for pruning
                 gaussians.max_radii2D[visibility_filter] = torch.max(gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
+                gaussians.max_pixel_sizes[visibility_filter] = torch.max(gaussians.max_pixel_sizes[visibility_filter], pixel_sizes[visibility_filter])
                 gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter)
 
                 if iteration > opt.densify_from_iter and iteration % opt.densification_interval == 0:
@@ -136,31 +138,34 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 if iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
                     gaussians.reset_opacity()
 
-            # Add large gaussians
-            if iteration < 15000:
-                if iteration > 500 and iteration % 100 == 0:
-                    added_new = gaussians.add_large_gaussian(viewpoint_cam, render_pkg)
-                    #
-                    # if added_new and iteration >= 1000:
-                    #     last_image = image.clone()
-                    #     old_pixel_size = render_pkg["acc_pixel_size"] / 3.0
-                    #     old_pixel_size = torch.tile(old_pixel_size, (3, 1, 1))
-                    #     old_depth = render_pkg["depth"]
-                    #     render_pkg = render(viewpoint_cam, gaussians, pipe, background)
-                    #     new_image = render_pkg["render"]
-                    #     new_depth = render_pkg["depth"]
-                    #     max_depth = torch.maximum(torch.max(old_depth), torch.max(new_depth))
-                    #     old_depth = old_depth / max_depth
-                    #     new_depth = new_depth / max_depth
-                    #     old_depth = torch.tile(old_depth, (3, 1, 1))
-                    #     new_depth = torch.tile(new_depth, (3, 1, 1))
-                    #
-                    #     image = torch.cat((last_image, new_image, old_pixel_size, old_depth, new_depth), dim=-1)
-                    #     image = image.cpu().numpy()
-                    #     image = image.transpose(1, 2, 0)
-                    #     image = cv2.resize(image, (image.shape[1] * resolution_scale // 2, image.shape[0] * resolution_scale // 2), interpolation=cv2.INTER_NEAREST)
-                    #     cv2.imshow("image", image)
-                    #     cv2.waitKey(0)
+                if iteration > opt.densify_from_iter and iteration % 1000 == 0:
+                    gaussians.prune_small_points()
+
+            # # Add large gaussians
+            # if iteration < 15000:
+            #     if iteration > 500 and iteration % 100 == 0:
+            #         added_new = gaussians.add_large_gaussian(viewpoint_cam, render_pkg)
+            #         #
+            #         # if added_new and iteration >= 1000:
+            #         #     last_image = image.clone()
+            #         #     old_pixel_size = render_pkg["acc_pixel_size"] / 3.0
+            #         #     old_pixel_size = torch.tile(old_pixel_size, (3, 1, 1))
+            #         #     old_depth = render_pkg["depth"]
+            #         #     render_pkg = render(viewpoint_cam, gaussians, pipe, background)
+            #         #     new_image = render_pkg["render"]
+            #         #     new_depth = render_pkg["depth"]
+            #         #     max_depth = torch.maximum(torch.max(old_depth), torch.max(new_depth))
+            #         #     old_depth = old_depth / max_depth
+            #         #     new_depth = new_depth / max_depth
+            #         #     old_depth = torch.tile(old_depth, (3, 1, 1))
+            #         #     new_depth = torch.tile(new_depth, (3, 1, 1))
+            #         #
+            #         #     image = torch.cat((last_image, new_image, old_pixel_size, old_depth, new_depth), dim=-1)
+            #         #     image = image.cpu().numpy()
+            #         #     image = image.transpose(1, 2, 0)
+            #         #     image = cv2.resize(image, (image.shape[1] * resolution_scale // 2, image.shape[0] * resolution_scale // 2), interpolation=cv2.INTER_NEAREST)
+            #         #     cv2.imshow("image", image)
+            #         #     cv2.waitKey(0)
 
             # Optimizer step
             if iteration < opt.iterations:
@@ -215,6 +220,7 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
         # validation_configs = ({'name': 'test', 'cameras' : scene.getTestCameras(reso_scale)},
         #                       {'name': 'train', 'cameras' : [scene.getTrainCameras(reso_scale)[idx % len(scene.getTrainCameras())] for idx in range(5, 30, 5)]})
 
+        output_str = f"[ITER {iteration}] Evaluating:"
         for config in validation_configs:
             reso_scale = config['scale']
             if config['cameras'] and len(config['cameras']) > 0:
@@ -240,16 +246,19 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
                 psnr_test /= len(config['cameras'])
                 l1_test /= len(config['cameras'])
                 render_time /= len(config['cameras'])
-                print(f"\n[ITER {iteration}] Evaluating {config['name']} s{reso_scale:.1f}: L1 {l1_test} PSNR {psnr_test}")
+                # print(f"\n[ITER {iteration}] Evaluating {config['name']} s{reso_scale:.1f}: L1 {l1_test} PSNR {psnr_test}")
+                output_str += f"s{reso_scale:.1f} PSNR {psnr_test:.2f} | "
                 if tb_writer:
                     tb_writer.add_scalar(f"{config['name']}/s{reso_scale:.1f}_loss_viewpoint - l1_loss", l1_test, iteration)
                     tb_writer.add_scalar(f"{config['name']}/s{reso_scale:.1f}_loss_viewpoint - psnr", psnr_test, iteration)
                     tb_writer.add_scalar(f"{config['name']}/s{reso_scale:.1f}_loss_viewpoint - render_time", render_time, iteration)
+        print(output_str)
 
     if iteration % 1000 == 0:
         if tb_writer:
             tb_writer.add_histogram("scene/opacity_histogram", scene.gaussians.get_opacity, iteration)
             tb_writer.add_scalar('total_points', scene.gaussians.get_xyz.shape[0], iteration)
+            tb_writer.add_histogram("scene/pixel_sizes_histogram", torch.clip(scene.gaussians.max_pixel_sizes, max=10), iteration)
         torch.cuda.empty_cache()
 
 if __name__ == "__main__":
