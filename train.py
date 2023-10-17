@@ -32,9 +32,9 @@ except ImportError:
     TENSORBOARD_FOUND = False
 
 
-max_reso_pow = 5
-train_reso_scales = [2**i for i in range(max_reso_pow + 1)]        # 1~32
-test_reso_scales = train_reso_scales + [(2**i + 2**(i+1)) / 2 for i in range(max_reso_pow)]     # 1~32, include half scales
+max_reso_pow = 7
+train_reso_scales = [2**i for i in range(max_reso_pow + 1)]        # 1~128
+test_reso_scales = train_reso_scales + [(2**i + 2**(i+1)) / 2 for i in range(max_reso_pow)]     # 1~128, include half scales
 test_reso_scales = sorted(test_reso_scales)
 full_reso_scales = sorted(list(set(train_reso_scales + test_reso_scales)))
 print('train_reso_scales', train_reso_scales)
@@ -123,6 +123,11 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             if (iteration in saving_iterations):
                 print("\n[ITER {}] Saving Gaussians".format(iteration))
                 scene.save(iteration)
+
+            # if iteration > opt.densify_from_iter:
+            if iteration > opt.densify_until_iter:
+                if resolution_scale == train_reso_scales[-1]:
+                    gaussians.update_base_gaussian_mask(visibility_filter)
 
             # Densification
             if iteration < opt.densify_until_iter:
@@ -272,7 +277,7 @@ if __name__ == "__main__":
     parser.add_argument('--debug_from', type=int, default=-1)
     parser.add_argument('--detect_anomaly', action='store_true', default=False)
     parser.add_argument("--test_iterations", nargs="+", type=int, default=[7_000, 30_000])
-    parser.add_argument("--save_iterations", nargs="+", type=int, default=[7_000, 30_000])
+    parser.add_argument("--save_iterations", nargs="+", type=int, default=[1_000, 7_000, 30_000])
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])
     parser.add_argument("--start_checkpoint", type=str, default = None)

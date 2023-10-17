@@ -57,6 +57,7 @@ class GaussianModel:
         self._opacity = torch.empty(0)
         self.max_radii2D = torch.empty(0)
         self.max_pixel_sizes = torch.empty(0)
+        self.base_gaussian_mask = torch.empty(0)
         self.xyz_gradient_accum = torch.empty(0)
         self.denom = torch.empty(0)
         self.optimizer = None
@@ -74,6 +75,7 @@ class GaussianModel:
             self._rotation,
             self._opacity,
             self.max_radii2D,
+            self.base_gaussian_mask,
             self.max_pixel_sizes,
             self.xyz_gradient_accum,
             self.denom,
@@ -82,19 +84,22 @@ class GaussianModel:
         )
     
     def restore(self, model_args, training_args):
-        (self.active_sh_degree, 
-        self._xyz, 
-        self._features_dc, 
-        self._features_rest,
-        self._scaling, 
-        self._rotation, 
-        self._opacity,
-        self.max_radii2D,
-        self.max_pixel_sizes,
-        xyz_gradient_accum,
-        denom,
-        opt_dict, 
-        self.spatial_lr_scale) = model_args
+        (
+            self.active_sh_degree,
+            self._xyz,
+            self._features_dc,
+            self._features_rest,
+            self._scaling,
+            self._rotation,
+            self._opacity,
+            self.max_radii2D,
+            self.base_gaussian_mask,
+            self.max_pixel_sizes,
+            xyz_gradient_accum,
+            denom,
+            opt_dict,
+            self.spatial_lr_scale
+        ) = model_args
         self.training_setup(training_args)
         self.xyz_gradient_accum = xyz_gradient_accum
         self.denom = denom
@@ -125,6 +130,10 @@ class GaussianModel:
     def get_covariance(self, scaling_modifier = 1):
         return self.covariance_activation(self.get_scaling, scaling_modifier, self._rotation)
 
+    @property
+    def get_base_mask(self):
+        return self.base_gaussian_mask
+
     def oneupSHdegree(self):
         if self.active_sh_degree < self.max_sh_degree:
             self.active_sh_degree += 1
@@ -154,6 +163,7 @@ class GaussianModel:
         self._opacity = nn.Parameter(opacities.requires_grad_(True))
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
         self.max_pixel_sizes = torch.zeros((self.get_xyz.shape[0]), device="cuda")
+        self.base_gaussian_mask = torch.zeros((self.get_xyz.shape[0]), device="cuda", dtype=torch.bool, requires_grad=False)
 
     def training_setup(self, training_args):
         self.percent_dense = training_args.percent_dense
@@ -195,6 +205,7 @@ class GaussianModel:
             l.append('scale_{}'.format(i))
         for i in range(self._rotation.shape[1]):
             l.append('rot_{}'.format(i))
+        l.append('base_gaussian_mask')
         return l
 
     def save_ply(self, path):
@@ -207,11 +218,13 @@ class GaussianModel:
         opacities = self._opacity.detach().cpu().numpy()
         scale = self._scaling.detach().cpu().numpy()
         rotation = self._rotation.detach().cpu().numpy()
+        base_gaussian_mask = self.base_gaussian_mask.detach().cpu().numpy()[:, None]
 
-        dtype_full = [(attribute, 'f4') for attribute in self.construct_list_of_attributes()]
+        dtype_full = [(attribute, 'bool') if attribute == 'base_gaussian_mask' else (attribute, 'f4')
+                      for attribute in self.construct_list_of_attributes()]
 
         elements = np.empty(xyz.shape[0], dtype=dtype_full)
-        attributes = np.concatenate((xyz, normals, f_dc, f_rest, opacities, scale, rotation), axis=1)
+        attributes = np.concatenate((xyz, normals, f_dc, f_rest, opacities, scale, rotation, base_gaussian_mask), axis=1)
         elements[:] = list(map(tuple, attributes))
         el = PlyElement.describe(elements, 'vertex')
         PlyData([el]).write(path)
@@ -255,12 +268,15 @@ class GaussianModel:
         for idx, attr_name in enumerate(rot_names):
             rots[:, idx] = np.asarray(plydata.elements[0][attr_name])
 
+        base_gaussian_mask = np.asarray(plydata.elements[0]["base_gaussian_mask"]).astype(np.bool)
+
         self._xyz = nn.Parameter(torch.tensor(xyz, dtype=torch.float, device="cuda").requires_grad_(True))
         self._features_dc = nn.Parameter(torch.tensor(features_dc, dtype=torch.float, device="cuda").transpose(1, 2).contiguous().requires_grad_(True))
         self._features_rest = nn.Parameter(torch.tensor(features_extra, dtype=torch.float, device="cuda").transpose(1, 2).contiguous().requires_grad_(True))
-        self._opacity = nn.Parameter(torch.tensor(opacities, dtype=torch.float, device="cuda").requires_grad_(True))
+        self._opacity = nn.Parameter(torch.tensor(opacities.copy(), dtype=torch.float, device="cuda").requires_grad_(True))
         self._scaling = nn.Parameter(torch.tensor(scales, dtype=torch.float, device="cuda").requires_grad_(True))
         self._rotation = nn.Parameter(torch.tensor(rots, dtype=torch.float, device="cuda").requires_grad_(True))
+        self.base_gaussian_mask = torch.from_numpy(base_gaussian_mask).to(device="cuda", dtype=torch.bool)
 
         self.active_sh_degree = self.max_sh_degree
 
@@ -313,6 +329,7 @@ class GaussianModel:
         self.denom = self.denom[valid_points_mask]
         self.max_radii2D = self.max_radii2D[valid_points_mask]
         self.max_pixel_sizes = self.max_pixel_sizes[valid_points_mask]
+        self.base_gaussian_mask = self.base_gaussian_mask[valid_points_mask]
 
     def cat_tensors_to_optimizer(self, tensors_dict):
         optimizable_tensors = {}
@@ -359,6 +376,8 @@ class GaussianModel:
         # need to add zeros at the back of the current max_pixel_sizes when doing densification
         new_max_pixel_sizes = torch.zeros((len(new_xyz)), device="cuda")
         self.max_pixel_sizes = torch.cat((self.max_pixel_sizes, new_max_pixel_sizes), dim=0)
+        new_base_gaussian_mask = torch.zeros((len(new_xyz)), device="cuda", dtype=torch.bool)
+        self.base_gaussian_mask = torch.cat((self.base_gaussian_mask, new_base_gaussian_mask), dim=0)
 
     def densify_and_split(self, grads, grad_threshold, scene_extent, N=2):
         n_init_points = self.get_xyz.shape[0]
@@ -419,7 +438,6 @@ class GaussianModel:
     def prune_small_points(self):
         if torch.max(self.max_pixel_sizes) > 0:
             prune_mask = self.max_pixel_sizes < 1.0
-            print(torch.min(self.max_pixel_sizes), torch.max(self.max_pixel_sizes), len(self.get_xyz), torch.sum(prune_mask.float()))
             self.prune_points(prune_mask)
             torch.cuda.empty_cache()
         else:
@@ -429,6 +447,10 @@ class GaussianModel:
     def add_densification_stats(self, viewspace_point_tensor, update_filter):
         self.xyz_gradient_accum[update_filter] += torch.norm(viewspace_point_tensor.grad[update_filter,:2], dim=-1, keepdim=True)
         self.denom[update_filter] += 1
+
+    def update_base_gaussian_mask(self, visibility_filter):
+        # only call this when training at the lowest resolution
+        self.base_gaussian_mask = torch.logical_or(self.base_gaussian_mask, visibility_filter)
 
     def add_large_gaussian(self, camera: Camera, render_results):
         rgb = render_results["render"]
