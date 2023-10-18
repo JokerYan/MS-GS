@@ -25,31 +25,6 @@ from gaussian_renderer import GaussianModel
 
 import cv2
 
-def render_set(model_path, name, iteration, views, gaussians, pipeline, background):
-    render_path = os.path.join(model_path, name, "ours_{}".format(iteration), "renders")
-    gts_path = os.path.join(model_path, name, "ours_{}".format(iteration), "gt")
-
-    makedirs(render_path, exist_ok=True)
-    makedirs(gts_path, exist_ok=True)
-
-    for idx, view in enumerate(tqdm(views, desc="Rendering progress")):
-        rendering = render(view, gaussians, pipeline, background)["render"]
-
-
-def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParams, skip_train : bool, skip_test : bool):
-    with torch.no_grad():
-        gaussians = GaussianModel(dataset.sh_degree)
-        scene = Scene(dataset, gaussians, load_iteration=iteration, shuffle=False)
-
-        bg_color = [1,1,1] if dataset.white_background else [0, 0, 0]
-        background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
-
-        if not skip_train:
-             render_set(dataset.model_path, "train", scene.loaded_iter, scene.getTrainCameras(), gaussians, pipeline, background)
-
-        if not skip_test:
-             render_set(dataset.model_path, "test", scene.loaded_iter, scene.getTestCameras(), gaussians, pipeline, background)
-
 
 def render_interactive(dataset: ModelParams, iteration: int, pipeline: PipelineParams):
     with torch.no_grad():
@@ -62,12 +37,13 @@ def render_interactive(dataset: ModelParams, iteration: int, pipeline: PipelineP
         # view = scene.getTestCameras()[0]
         view = copy.deepcopy(scene.getTrainCameras()[0])
         gs_scale = 1.0          # size of scale compared to the original size
+        fade_size = 1.0
         while True:
             view.cal_transform()
             torch.cuda.synchronize()
             time_start = time.time()
 
-            results = render(view, gaussians, pipeline, background, scaling_modifier=gs_scale)
+            results = render(view, gaussians, pipeline, background, scaling_modifier=gs_scale, fade_size=fade_size)
             rendering = results["render"]
             acc_pixel_size = results["acc_pixel_size"]
             depth = results["depth"]
@@ -115,9 +91,14 @@ def render_interactive(dataset: ModelParams, iteration: int, pipeline: PipelineP
                 gs_scale = max(0.1, gs_scale - 0.1)
             elif key == ord(']'):
                 gs_scale = min(2.0, gs_scale + 0.1)
+            elif key == ord(';'):
+                fade_size = max(0.1, fade_size - 0.1)
+            elif key == ord('\''):
+                fade_size = min(2.0, fade_size + 0.1)
             elif key == ord('z'):
                 view = copy.deepcopy(scene.getTrainCameras()[0])
                 gs_scale = 1.0
+                fade_size = 1.0
 
 if __name__ == "__main__":
     # Set up command line argument parser
