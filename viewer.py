@@ -26,7 +26,7 @@ from gaussian_renderer import GaussianModel
 import cv2
 
 
-def render_interactive(dataset: ModelParams, iteration: int, pipeline: PipelineParams):
+def render_interactive(dataset: ModelParams, iteration: int, pipeline: PipelineParams, anti_alias=False):
     with torch.no_grad():
         gaussians = GaussianModel(dataset.sh_degree)
         scene = Scene(dataset, gaussians, load_iteration=iteration, shuffle=False)
@@ -38,12 +38,17 @@ def render_interactive(dataset: ModelParams, iteration: int, pipeline: PipelineP
         view = copy.deepcopy(scene.getTrainCameras()[0])
         gs_scale = 1.0          # size of scale compared to the original size
         fade_size = 1.0
+        if anti_alias:
+            filter_small = True
+        else:
+            filter_small = False
         while True:
             view.cal_transform()
             torch.cuda.synchronize()
             time_start = time.time()
 
-            results = render(view, gaussians, pipeline, background, scaling_modifier=gs_scale, fade_size=fade_size)
+            results = render(view, gaussians, pipeline, background, scaling_modifier=gs_scale,
+                             filter_small=filter_small, fade_size=fade_size)
             rendering = results["render"]
             acc_pixel_size = results["acc_pixel_size"]
             depth = results["depth"]
@@ -107,6 +112,7 @@ if __name__ == "__main__":
     pipeline = PipelineParams(parser)
     parser.add_argument("--iteration", default=-1, type=int)
     parser.add_argument("--quiet", action="store_true")
+    parser.add_argument("--anti_alias", action="store_true", default=False)
     args = get_combined_args(parser)
     print("Rendering " + args.model_path)
 
@@ -114,4 +120,4 @@ if __name__ == "__main__":
     safe_state(args.quiet)
 
     # render_sets(model.extract(args), args.iteration, pipeline.extract(args), args.skip_train, args.skip_test)
-    render_interactive(model.extract(args), args.iteration, pipeline.extract(args))
+    render_interactive(model.extract(args), args.iteration, pipeline.extract(args), anti_alias=args.anti_alias)

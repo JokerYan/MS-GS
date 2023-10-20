@@ -16,7 +16,7 @@ from scene.gaussian_model import GaussianModel
 from utils.sh_utils import eval_sh
 
 def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor,
-           scaling_modifier=1.0, override_color=None, fade_size=1.0):
+           scaling_modifier=1.0, override_color=None, filter_small=True, fade_size=1.0):
     """
     Render the scene. 
     
@@ -47,6 +47,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor,
         campos=viewpoint_camera.camera_center,
         prefiltered=False,
         debug=pipe.debug,
+        filter_small=filter_small,
         fade_size=fade_size,
     )
 

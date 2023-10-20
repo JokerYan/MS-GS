@@ -11,6 +11,7 @@
 
 import os
 import time
+import math
 
 import cv2
 import torch
@@ -33,6 +34,7 @@ except ImportError:
 
 
 max_reso_pow = 7
+# max_reso_pow = 5
 # max_reso_pow = 1
 train_reso_scales = [2**i for i in range(max_reso_pow + 1)]        # 1~128
 test_reso_scales = train_reso_scales + [(2**i + 2**(i+1)) / 2 for i in range(max_reso_pow)]     # 1~128, include half scales
@@ -42,7 +44,10 @@ print('train_reso_scales', train_reso_scales)
 print('test_reso_scales', test_reso_scales)
 print('full_reso_scales', full_reso_scales)
 
-def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from, ms_train=False):
+def training(
+        dataset, opt, pipe, testing_iterations, test_interval,
+        saving_iterations, checkpoint_iterations, checkpoint, debug_from,
+        ms_train=False, filter_small=False, prune_small=False, preserve_large=False):
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
     gaussians = GaussianModel(dataset.sh_degree)
@@ -63,11 +68,11 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
     first_iter += 1
     for iteration in range(first_iter, opt.iterations + 1):
-        if iteration < opt.densify_until_iter:
-            fade_size = 0
-        else:
-            fade_size = 1.0
-        # fade_size = 0
+        # if iteration < opt.densify_until_iter + 10000:
+        #     fade_size = 0
+        # else:
+        #     fade_size = 1.0
+        fade_size = 0
 
         if network_gui.conn == None:
             network_gui.try_connect()
@@ -76,7 +81,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 net_image_bytes = None
                 custom_cam, do_training, pipe.convert_SHs_python, pipe.compute_cov3D_python, keep_alive, scaling_modifer = network_gui.receive()
                 if custom_cam != None:
-                    net_image = render(custom_cam, gaussians, pipe, background, scaling_modifer, fade_size=fade_size)["render"]
+                    net_image = render(custom_cam, gaussians, pipe, background, scaling_modifer,
+                                       filter_small=filter_small, fade_size=fade_size)["render"]
                     net_image_bytes = memoryview((torch.clamp(net_image, min=0, max=1.0) * 255).byte().permute(1, 2, 0).contiguous().cpu().numpy())
                 network_gui.send(net_image_bytes, dataset.source_path)
                 if do_training and ((iteration < int(opt.iterations)) or not keep_alive):
@@ -94,7 +100,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         # Pick a random Camera
         if not viewpoint_stack:
-            if ms_train:
+            if ms_train and iteration > opt.densify_until_iter:
+            # if ms_train:
                 resolution_scale = train_reso_scales[randint(0, len(train_reso_scales)-1)]
             else:
                 resolution_scale = 1.0  # use the highest resolution only
@@ -104,7 +111,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         # Render
         if (iteration - 1) == debug_from:
             pipe.debug = True
-        render_pkg = render(viewpoint_cam, gaussians, pipe, background, fade_size=fade_size)
+        render_pkg = render(viewpoint_cam, gaussians, pipe, background, filter_small=filter_small, fade_size=fade_size)
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
         pixel_sizes = render_pkg["pixel_sizes"]
 
@@ -112,6 +119,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         gt_image = viewpoint_cam.original_image.cuda()
         Ll1 = l1_loss(image, gt_image)
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
+        if ms_train:
+            loss_multiplier = 1 / (math.log(resolution_scale, 2) * 3 + 1)
+            loss *= loss_multiplier
         loss.backward()
 
         iter_end.record()
@@ -126,13 +136,15 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 progress_bar.close()
 
             # Log and save
-            training_report(tb_writer, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background), fade_size)
+            training_report(tb_writer, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end),
+                            testing_iterations, test_interval, scene, render, (pipe, background),
+                            filter_small, fade_size)
             if (iteration in saving_iterations):
                 print("\n[ITER {}] Saving Gaussians".format(iteration))
                 scene.save(iteration)
 
             # if iteration > opt.densify_from_iter:
-            if iteration > opt.densify_until_iter:
+            if preserve_large and iteration > opt.densify_until_iter:
                 if resolution_scale == train_reso_scales[-1]:
                     gaussians.update_base_gaussian_mask(visibility_filter)
 
@@ -144,13 +156,14 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter)
 
                 if iteration > opt.densify_from_iter and iteration % opt.densification_interval == 0:
+                        # and resolution_scale == train_reso_scales[0]:       # densify only at the highest resolution
                     size_threshold = 20 if iteration > opt.opacity_reset_interval else None
                     gaussians.densify_and_prune(opt.densify_grad_threshold, 0.005, scene.cameras_extent, size_threshold)
                 
                 if iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
                     gaussians.reset_opacity()
 
-                if iteration > opt.densify_from_iter and iteration % 1000 == 0:
+                if prune_small and iteration > opt.densify_from_iter and iteration % 1000 == 0:
                     gaussians.prune_small_points()
 
             # # Add large gaussians
@@ -210,14 +223,16 @@ def prepare_output_and_logger(args):
         print("Tensorboard not available: not logging progress")
     return tb_writer
 
-def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_iterations, scene : Scene, renderFunc, renderArgs, fade_size=0):
+def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed,
+                    testing_iterations, test_interval, scene : Scene, renderFunc, renderArgs,
+                    filter_small=False, fade_size=0):
     if tb_writer:
         tb_writer.add_scalar('train_loss_patches/l1_loss', Ll1.item(), iteration)
         tb_writer.add_scalar('train_loss_patches/total_loss', loss.item(), iteration)
         tb_writer.add_scalar('iter_time', elapsed, iteration)
 
     # Report test and samples of training set
-    if iteration in testing_iterations:
+    if iteration in testing_iterations or (iteration > 0 and iteration % test_interval == 0):
         torch.cuda.empty_cache()
         validation_configs = []
         for reso_scale in test_reso_scales:
@@ -240,8 +255,13 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
                 psnr_test = 0.0
                 render_time = 0.0
                 for idx, viewpoint in enumerate(config['cameras']):
+                    torch.cuda.synchronize()
                     start_time = time.time()
-                    image = torch.clamp(renderFunc(viewpoint, scene.gaussians, *renderArgs, fade_size=fade_size)["render"], 0.0, 1.0)
+
+                    image = torch.clamp(renderFunc(viewpoint, scene.gaussians, *renderArgs,
+                                                   filter_small=filter_small, fade_size=fade_size)["render"], 0.0, 1.0)
+
+                    torch.cuda.synchronize()
                     render_time += time.time() - start_time
 
                     gt_image = torch.clamp(viewpoint.original_image.to("cuda"), 0.0, 1.0)
@@ -284,11 +304,15 @@ if __name__ == "__main__":
     parser.add_argument('--debug_from', type=int, default=-1)
     parser.add_argument('--detect_anomaly', action='store_true', default=False)
     parser.add_argument("--test_iterations", nargs="+", type=int, default=[7_000, 30_000])
+    parser.add_argument("--test_interval", type=int, default=5_000)
     parser.add_argument("--save_iterations", nargs="+", type=int, default=[1_000, 7_000, 30_000])
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])
     parser.add_argument("--start_checkpoint", type=str, default = None)
     parser.add_argument('--ms_train', action='store_true', default=False, help='use multi-scale training')
+    parser.add_argument('--filter_small', action='store_true', default=False, help='filter small gaussians based on pixel size')
+    parser.add_argument('--prune_small', action='store_true', default=False, help='prune small gaussians based on pixel size')
+    parser.add_argument('--preserve_large', action='store_true', default=False, help='preserve large gaussians')
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
     
@@ -300,7 +324,10 @@ if __name__ == "__main__":
     # Start GUI server, configure and run training
     network_gui.init(args.ip, args.port)
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
-    training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, args.debug_from, ms_train=args.ms_train)
+    training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.test_interval,
+             args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, args.debug_from,
+             ms_train=args.ms_train, filter_small=args.filter_small, prune_small=args.prune_small,
+             preserve_large=args.preserve_large)
 
     # All done
     print("\nTraining complete.")
