@@ -35,7 +35,8 @@ def render_interactive(dataset: ModelParams, iteration: int, pipeline: PipelineP
         background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
 
         # view = scene.getTestCameras()[0]
-        view = copy.deepcopy(scene.getTrainCameras()[0])
+        view_idx = 0
+        view = copy.deepcopy(scene.getTestCameras()[view_idx])
         gs_scale = 1.0          # size of scale compared to the original size
         fade_size = 1.0
         if anti_alias:
@@ -100,8 +101,14 @@ def render_interactive(dataset: ModelParams, iteration: int, pipeline: PipelineP
                 fade_size = max(0.1, fade_size - 0.1)
             elif key == ord('\''):
                 fade_size = min(2.0, fade_size + 0.1)
+            elif key == ord('x'):
+                view_idx = (view_idx - 1) % len(scene.getTestCameras())
+                view = copy.deepcopy(scene.getTestCameras()[view_idx])
+            elif key == ord('c'):
+                view_idx = (view_idx + 1) % len(scene.getTestCameras())
+                view = copy.deepcopy(scene.getTestCameras()[view_idx])
             elif key == ord('z'):
-                view = copy.deepcopy(scene.getTrainCameras()[0])
+                view = copy.deepcopy(scene.getTestCameras()[view_idx])
                 gs_scale = 1.0
                 fade_size = 1.0
 

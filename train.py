@@ -47,10 +47,12 @@ print('full_reso_scales', full_reso_scales)
 def training(
         dataset, opt, pipe, testing_iterations, test_interval,
         saving_iterations, checkpoint_iterations, checkpoint, debug_from,
-        ms_train=False, filter_small=False, prune_small=False, preserve_large=False):
+        ms_train=False, filter_small=False, prune_small=False, preserve_large=False,
+        multi_occ=False,
+):
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
-    gaussians = GaussianModel(dataset.sh_degree)
+    gaussians = GaussianModel(dataset.sh_degree, multi_occ=multi_occ)
     scene = Scene(dataset, gaussians, resolution_scales=full_reso_scales)
     gaussians.training_setup(opt)
     if checkpoint:
@@ -101,6 +103,7 @@ def training(
         # Pick a random Camera
         if not viewpoint_stack:
             if ms_train and iteration > opt.densify_until_iter:
+            # if ms_train and iteration > 5000:
             # if ms_train:
                 resolution_scale = train_reso_scales[randint(0, len(train_reso_scales)-1)]
             else:
@@ -114,6 +117,15 @@ def training(
         render_pkg = render(viewpoint_cam, gaussians, pipe, background, filter_small=filter_small, fade_size=fade_size)
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
         pixel_sizes = render_pkg["pixel_sizes"]
+
+        # if iteration % 500 == 0:
+        #     # print(iteration, torch.mean(gaussians.get_occ_multiplier),
+        #     #       torch.min(gaussians.get_occ_multiplier), torch.max(gaussians.get_occ_multiplier))
+        #     print(iteration, torch.mean(gaussians._occ_multiplier),
+        #           torch.min(gaussians._occ_multiplier), torch.max(gaussians._occ_multiplier))
+        #     print(iteration, torch.mean(gaussians._opacity),
+        #           torch.min(gaussians._opacity), torch.max(gaussians._opacity))
+        #     print()
 
         # Loss
         gt_image = viewpoint_cam.original_image.cuda()
@@ -313,6 +325,7 @@ if __name__ == "__main__":
     parser.add_argument('--filter_small', action='store_true', default=False, help='filter small gaussians based on pixel size')
     parser.add_argument('--prune_small', action='store_true', default=False, help='prune small gaussians based on pixel size')
     parser.add_argument('--preserve_large', action='store_true', default=False, help='preserve large gaussians')
+    parser.add_argument('--multi_occ', action='store_true', default=False, help='use multiple occ multiplier')
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
     
@@ -327,7 +340,7 @@ if __name__ == "__main__":
     training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.test_interval,
              args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, args.debug_from,
              ms_train=args.ms_train, filter_small=args.filter_small, prune_small=args.prune_small,
-             preserve_large=args.preserve_large)
+             preserve_large=args.preserve_large, multi_occ=args.multi_occ)
 
     # All done
     print("\nTraining complete.")

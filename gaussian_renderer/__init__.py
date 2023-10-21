@@ -56,6 +56,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor,
     means3D = pc.get_xyz
     means2D = screenspace_points
     opacity = pc.get_opacity
+    occ_multiplier = pc.get_occ_multiplier
     base_mask = pc.get_base_mask
 
     # If precomputed 3d covariance is provided, use it. If not, then it will be computed from
@@ -87,15 +88,16 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor,
 
     # Rasterize visible Gaussians to image, obtain their radii (on screen). 
     rendered_image, acc_pixel_size, depth, radii, pixel_sizes = rasterizer(
-        means3D = means3D,
-        means2D = means2D,
-        shs = shs,
-        colors_precomp = colors_precomp,
-        opacities = opacity,
-        scales = scales,
-        rotations = rotations,
-        cov3D_precomp = cov3D_precomp,
-        base_mask = base_mask,
+        means3D=means3D,
+        means2D=means2D,
+        shs=shs,
+        colors_precomp=colors_precomp,
+        opacities=opacity,
+        occ_multiplier=occ_multiplier,
+        scales=scales,
+        rotations=rotations,
+        cov3D_precomp=cov3D_precomp,
+        base_mask=base_mask,
     )
 
     # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
