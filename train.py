@@ -37,7 +37,8 @@ max_reso_pow = 7
 # max_reso_pow = 5
 # max_reso_pow = 1
 train_reso_scales = [2**i for i in range(max_reso_pow + 1)]        # 1~128
-test_reso_scales = train_reso_scales + [(2**i + 2**(i+1)) / 2 for i in range(max_reso_pow)]     # 1~128, include half scales
+# test_reso_scales = train_reso_scales + [(2**i + 2**(i+1)) / 2 for i in range(max_reso_pow)]     # 1~128, include half scales
+test_reso_scales = train_reso_scales    # without half scales
 test_reso_scales = sorted(test_reso_scales)
 full_reso_scales = sorted(list(set(train_reso_scales + test_reso_scales)))
 print('train_reso_scales', train_reso_scales)
@@ -48,11 +49,11 @@ def training(
         dataset, opt, pipe, testing_iterations, test_interval,
         saving_iterations, checkpoint_iterations, checkpoint, debug_from,
         ms_train=False, filter_small=False, prune_small=False, preserve_large=False,
-        multi_occ=False,
+        multi_occ=False, multi_dc=False,
 ):
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
-    gaussians = GaussianModel(dataset.sh_degree, multi_occ=multi_occ)
+    gaussians = GaussianModel(dataset.sh_degree, multi_occ=multi_occ, multi_dc=multi_dc)
     scene = Scene(dataset, gaussians, resolution_scales=full_reso_scales)
     gaussians.training_setup(opt)
     if checkpoint:
@@ -110,6 +111,9 @@ def training(
                 resolution_scale = 1.0  # use the highest resolution only
             viewpoint_stack = scene.getTrainCameras(resolution_scale).copy()
         viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
+
+        if iteration == opt.densify_until_iter:
+            gaussians.start_ms_lr()
 
         # Render
         if (iteration - 1) == debug_from:
@@ -326,6 +330,7 @@ if __name__ == "__main__":
     parser.add_argument('--prune_small', action='store_true', default=False, help='prune small gaussians based on pixel size')
     parser.add_argument('--preserve_large', action='store_true', default=False, help='preserve large gaussians')
     parser.add_argument('--multi_occ', action='store_true', default=False, help='use multiple occ multiplier')
+    parser.add_argument('--multi_dc', action='store_true', default=False, help='use multiple dc features delta')
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
     
@@ -340,7 +345,7 @@ if __name__ == "__main__":
     training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.test_interval,
              args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, args.debug_from,
              ms_train=args.ms_train, filter_small=args.filter_small, prune_small=args.prune_small,
-             preserve_large=args.preserve_large, multi_occ=args.multi_occ)
+             preserve_large=args.preserve_large, multi_occ=args.multi_occ, multi_dc=args.multi_dc)
 
     # All done
     print("\nTraining complete.")

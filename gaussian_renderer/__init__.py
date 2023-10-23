@@ -57,6 +57,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor,
     means2D = screenspace_points
     opacity = pc.get_opacity
     occ_multiplier = pc.get_occ_multiplier
+    dc_delta = pc.get_dc_delta
     base_mask = pc.get_base_mask
 
     # If precomputed 3d covariance is provided, use it. If not, then it will be computed from
@@ -94,6 +95,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor,
         colors_precomp=colors_precomp,
         opacities=opacity,
         occ_multiplier=occ_multiplier,
+        dc_delta=dc_delta,
         scales=scales,
         rotations=rotations,
         cov3D_precomp=cov3D_precomp,

@@ -10,6 +10,7 @@
 #
 
 import os
+import pickle
 import random
 import json
 from utils.system_utils import searchForMaxIteration
@@ -63,23 +64,39 @@ class Scene:
             with open(os.path.join(self.model_path, "cameras.json"), 'w') as file:
                 json.dump(json_cams, file)
 
-        if shuffle:
-            random.shuffle(scene_info.train_cameras)  # Multi-res consistent random shuffling
-            random.shuffle(scene_info.test_cameras)  # Multi-res consistent random shuffling
+        # cache cameras
+        camera_cache_name = f"cameras_{len(resolution_scales)}.pkl"
+        camera_cache_path = os.path.join(args.source_path, camera_cache_name)
+        if os.path.exists(camera_cache_path):
+            print("Loading cameras from cache")
+            camera_data = pickle.load(open(camera_cache_path, "rb"))
+            scene_info = camera_data["scene_info"]
+            self.train_cameras = camera_data["train_cameras"]
+            self.test_cameras = camera_data["test_cameras"]
+        else:
+            if shuffle:
+                random.shuffle(scene_info.train_cameras)  # Multi-res consistent random shuffling
+                random.shuffle(scene_info.test_cameras)  # Multi-res consistent random shuffling
+            for resolution_scale in resolution_scales:
+                print("Loading Training Cameras")
+                self.train_cameras[resolution_scale] = cameraList_from_camInfos(scene_info.train_cameras, resolution_scale, args)
+                print("Loading Test Cameras")
+                self.test_cameras[resolution_scale] = cameraList_from_camInfos(scene_info.test_cameras, resolution_scale, args)
+            camera_data = {
+                "scene_info": scene_info,
+                "train_cameras": self.train_cameras,
+                "test_cameras": self.test_cameras
+            }
+            pickle.dump(camera_data, open(camera_cache_path, "wb"))
+            print(f"Saved cameras to cache {camera_cache_path}")
 
         self.cameras_extent = scene_info.nerf_normalization["radius"]
 
-        for resolution_scale in resolution_scales:
-            print("Loading Training Cameras")
-            self.train_cameras[resolution_scale] = cameraList_from_camInfos(scene_info.train_cameras, resolution_scale, args)
-            print("Loading Test Cameras")
-            self.test_cameras[resolution_scale] = cameraList_from_camInfos(scene_info.test_cameras, resolution_scale, args)
-
         if self.loaded_iter:
             self.gaussians.load_ply(os.path.join(self.model_path,
-                                                           "point_cloud",
-                                                           "iteration_" + str(self.loaded_iter),
-                                                           "point_cloud.ply"))
+                                                 "point_cloud",
+                                                 "iteration_" + str(self.loaded_iter),
+                                                 "point_cloud.ply"))
         else:
             self.gaussians.create_from_pcd(scene_info.point_cloud, self.cameras_extent)
 
