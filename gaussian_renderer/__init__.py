@@ -55,6 +55,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor,
 
     means3D = pc.get_xyz
     means2D = screenspace_points
+    min_pixel_sizes = pc.get_min_pixel_sizes
     opacity = pc.get_opacity
     occ_multiplier = pc.get_occ_multiplier
     dc_delta = pc.get_dc_delta
@@ -93,6 +94,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor,
         means2D=means2D,
         shs=shs,
         colors_precomp=colors_precomp,
+        min_pixel_sizes=min_pixel_sizes,
         opacities=opacity,
         occ_multiplier=occ_multiplier,
         dc_delta=dc_delta,

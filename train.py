@@ -184,7 +184,10 @@ def training(
                 gaussians.max_radii2D[visibility_filter] = torch.max(gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
                 if prune_small:
                     gaussians.max_pixel_sizes[visibility_filter] = torch.max(gaussians.max_pixel_sizes[visibility_filter], pixel_sizes[visibility_filter])
-                if resolution_scale == 1:
+                if resolution_scale == 1 and iteration >= 250:
+                    if iteration % 100 == 0:
+                        # prevent the min pixel sizes is outdated
+                        gaussians.min_pixel_sizes = torch.clip(gaussians.min_pixel_sizes * 1.1, -1)
                     gaussians.min_pixel_sizes[visibility_filter] = torch.where(
                         gaussians.min_pixel_sizes[visibility_filter] < 0,     # if not initialized
                         torch.where(

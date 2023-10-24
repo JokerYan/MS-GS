@@ -150,6 +150,10 @@ class GaussianModel:
     @property
     def get_dc_delta(self):
         return self._dc_delta
+
+    @property
+    def get_min_pixel_sizes(self):
+        return self.min_pixel_sizes
     
     def get_covariance(self, scaling_modifier = 1):
         return self.covariance_activation(self.get_scaling, scaling_modifier, self._rotation)
