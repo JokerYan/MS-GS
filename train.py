@@ -15,7 +15,7 @@ import math
 
 import cv2
 import torch
-from random import randint
+from random import randint, random
 from utils.loss_utils import l1_loss, ssim
 from gaussian_renderer import render, network_gui
 import sys
@@ -44,6 +44,8 @@ full_reso_scales = sorted(list(set(train_reso_scales + test_reso_scales)))
 print('train_reso_scales', train_reso_scales)
 print('test_reso_scales', test_reso_scales)
 print('full_reso_scales', full_reso_scales)
+
+ms_from_iter = 1
 
 def training(
         dataset, opt, pipe, testing_iterations, test_interval,
@@ -103,16 +105,24 @@ def training(
 
         # Pick a random Camera
         if not viewpoint_stack:
-            if ms_train and iteration > opt.densify_until_iter:
+            if ms_train and iteration >= ms_from_iter:
+            # if ms_train and iteration > opt.densify_until_iter:
             # if ms_train and iteration > 5000:
             # if ms_train:
-                resolution_scale = train_reso_scales[randint(0, len(train_reso_scales)-1)]
+            #     resolution_scale = train_reso_scales[randint(0, len(train_reso_scales)-1)]
+
+                # half the chance of getting the highest resolution
+                if random() < 0.5:
+                    resolution_scale = train_reso_scales[0]
+                else:
+                    resolution_scale = train_reso_scales[randint(0, len(train_reso_scales)-1)]
             else:
                 resolution_scale = 1.0  # use the highest resolution only
             viewpoint_stack = scene.getTrainCameras(resolution_scale).copy()
         viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
 
-        if iteration == opt.densify_until_iter:
+        # if iteration == opt.densify_until_iter:
+        if iteration == ms_from_iter:
             gaussians.start_ms_lr()
 
         # Render
@@ -127,9 +137,9 @@ def training(
         #     #       torch.min(gaussians.get_occ_multiplier), torch.max(gaussians.get_occ_multiplier))
         #     print(iteration, torch.mean(gaussians._occ_multiplier),
         #           torch.min(gaussians._occ_multiplier), torch.max(gaussians._occ_multiplier))
-        #     print(iteration, torch.mean(gaussians._opacity),
-        #           torch.min(gaussians._opacity), torch.max(gaussians._opacity))
-        #     print()
+        #     print(iteration, torch.mean(gaussians._dc_delta),
+        #           torch.min(gaussians._dc_delta), torch.max(gaussians._dc_delta))
+        #     # print()
 
         # Loss
         gt_image = viewpoint_cam.original_image.cuda()
@@ -164,11 +174,29 @@ def training(
                 if resolution_scale == train_reso_scales[-1]:
                     gaussians.update_base_gaussian_mask(visibility_filter)
 
+            # if iteration % 100 == 0:
+            #     print(torch.min(gaussians.min_pixel_sizes), torch.max(gaussians.min_pixel_sizes),
+            #           torch.median(gaussians.min_pixel_sizes), torch.min(pixel_sizes), torch.max(pixel_sizes))
+
             # Densification
             if iteration < opt.densify_until_iter:
                 # Keep track of max radii in image-space for pruning
                 gaussians.max_radii2D[visibility_filter] = torch.max(gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
-                gaussians.max_pixel_sizes[visibility_filter] = torch.max(gaussians.max_pixel_sizes[visibility_filter], pixel_sizes[visibility_filter])
+                if prune_small:
+                    gaussians.max_pixel_sizes[visibility_filter] = torch.max(gaussians.max_pixel_sizes[visibility_filter], pixel_sizes[visibility_filter])
+                if resolution_scale == 1:
+                    gaussians.min_pixel_sizes[visibility_filter] = torch.where(
+                        gaussians.min_pixel_sizes[visibility_filter] < 0,     # if not initialized
+                        torch.where(
+                            pixel_sizes[visibility_filter] > 0,                 # pixel size is valid
+                            pixel_sizes[visibility_filter],
+                            gaussians.min_pixel_sizes[visibility_filter]
+                        ),
+                        torch.where(                                            # if initialized
+                            pixel_sizes[visibility_filter] > 0,                 # pixel size is valid
+                            torch.min(gaussians.min_pixel_sizes[visibility_filter], pixel_sizes[visibility_filter]),
+                            gaussians.min_pixel_sizes[visibility_filter]
+                        ))
                 gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter)
 
                 if iteration > opt.densify_from_iter and iteration % opt.densification_interval == 0:

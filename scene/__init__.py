@@ -73,6 +73,7 @@ class Scene:
             scene_info = camera_data["scene_info"]
             self.train_cameras = camera_data["train_cameras"]
             self.test_cameras = camera_data["test_cameras"]
+            print("Camera cache loaded")
         else:
             if shuffle:
                 random.shuffle(scene_info.train_cameras)  # Multi-res consistent random shuffling

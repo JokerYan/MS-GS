@@ -61,6 +61,7 @@ class GaussianModel:
         self.n_lvl_dc = 4     # 2, 4, 8, 16
         self.max_radii2D = torch.empty(0)
         self.max_pixel_sizes = torch.empty(0)
+        self.min_pixel_sizes = torch.empty(0)       # minimum pixel sizes at the highest resolution, -1 as default
         self.base_gaussian_mask = torch.empty(0)
         self.xyz_gradient_accum = torch.empty(0)
         self.denom = torch.empty(0)
@@ -85,6 +86,7 @@ class GaussianModel:
             self.max_radii2D,
             self.base_gaussian_mask,
             self.max_pixel_sizes,
+            self.min_pixel_sizes,
             self.xyz_gradient_accum,
             self.denom,
             self.optimizer.state_dict(),
@@ -103,6 +105,7 @@ class GaussianModel:
             self._occ_multiplier,
             self._dc_delta,
             self.max_radii2D,
+            self.min_pixel_sizes,
             self.base_gaussian_mask,
             self.max_pixel_sizes,
             xyz_gradient_accum,
@@ -139,7 +142,10 @@ class GaussianModel:
 
     @property
     def get_occ_multiplier(self):
-        return self.opacity_activation(self._occ_multiplier)
+        if self.multi_occ:
+            return self.opacity_activation(self._occ_multiplier)
+        else:
+            return self._occ_multiplier
 
     @property
     def get_dc_delta(self):
@@ -173,7 +179,7 @@ class GaussianModel:
 
         opacities = inverse_sigmoid(0.1 * torch.ones((fused_point_cloud.shape[0], 1), dtype=torch.float, device="cuda"))
         if self.multi_occ:
-            occ_multiplier = inverse_sigmoid(0.5 * torch.ones((len(fused_point_cloud), self.n_lvl_occ, 1), dtype=torch.float, device="cuda"))
+            occ_multiplier = inverse_sigmoid(0.99 * torch.ones((len(fused_point_cloud), self.n_lvl_occ, 1), dtype=torch.float, device="cuda"))
         else:
             occ_multiplier = torch.ones((len(fused_point_cloud), self.n_lvl_occ, 1), dtype=torch.float, device="cuda")
 
@@ -192,6 +198,7 @@ class GaussianModel:
         self._dc_delta = nn.Parameter(dc_delta.requires_grad_(True if self.multi_dc else False))
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
         self.max_pixel_sizes = torch.zeros((self.get_xyz.shape[0]), device="cuda")
+        self.min_pixel_sizes = torch.ones((self.get_xyz.shape[0]), device="cuda") * -1
         self.base_gaussian_mask = torch.zeros((self.get_xyz.shape[0]), device="cuda", dtype=torch.bool, requires_grad=False)
 
     def training_setup(self, training_args):
@@ -227,10 +234,11 @@ class GaussianModel:
                     or param_group["name"] == "opacity" \
                     or param_group["name"] == "scaling" \
                     or param_group["name"] == "rotation":
-                param_group['lr'] = 0
+                # param_group['lr'] = 0
+                pass
             elif param_group["name"] == "occ_multiplier":
                 param_group['lr'] = self.training_args.opacity_lr if self.multi_occ else 0
-            elif param_group["name" == "dc_delta"]:
+            elif param_group["name"] == "dc_delta":
                 param_group['lr'] = self.training_args.feature_lr * 1e-1 if self.multi_dc else 0
 
     def update_learning_rate(self, iteration):
@@ -400,6 +408,7 @@ class GaussianModel:
         self.denom = self.denom[valid_points_mask]
         self.max_radii2D = self.max_radii2D[valid_points_mask]
         self.max_pixel_sizes = self.max_pixel_sizes[valid_points_mask]
+        self.min_pixel_sizes = self.min_pixel_sizes[valid_points_mask]
         self.base_gaussian_mask = self.base_gaussian_mask[valid_points_mask]
 
     def cat_tensors_to_optimizer(self, tensors_dict):
@@ -452,6 +461,8 @@ class GaussianModel:
         # need to add zeros at the back of the current max_pixel_sizes when doing densification
         new_max_pixel_sizes = torch.zeros((len(new_xyz)), device="cuda")
         self.max_pixel_sizes = torch.cat((self.max_pixel_sizes, new_max_pixel_sizes), dim=0)
+        new_min_pixel_sizes = torch.ones((len(new_xyz)), device="cuda") * -1
+        self.min_pixel_sizes = torch.cat((self.min_pixel_sizes, new_min_pixel_sizes), dim=0)
         new_base_gaussian_mask = torch.zeros((len(new_xyz)), device="cuda", dtype=torch.bool)
         self.base_gaussian_mask = torch.cat((self.base_gaussian_mask, new_base_gaussian_mask), dim=0)
 
