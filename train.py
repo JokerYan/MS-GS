@@ -45,7 +45,8 @@ print('train_reso_scales', train_reso_scales)
 print('test_reso_scales', test_reso_scales)
 print('full_reso_scales', full_reso_scales)
 
-ms_from_iter = 1
+# ms_from_iter = 1
+ms_from_iter = 15000
 
 def training(
         dataset, opt, pipe, testing_iterations, test_interval,
@@ -338,6 +339,8 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed,
             tb_writer.add_histogram("scene/opacity_histogram", scene.gaussians.get_opacity, iteration)
             tb_writer.add_scalar('total_points', scene.gaussians.get_xyz.shape[0], iteration)
             tb_writer.add_histogram("scene/pixel_sizes_histogram", torch.clip(scene.gaussians.max_pixel_sizes, max=10), iteration)
+            for i in range(scene.gaussians.get_occ_multiplier.shape[1]):
+                tb_writer.add_histogram(f"scene/occ_multiplier_histogram_{i}", scene.gaussians.get_occ_multiplier[:, i], iteration)
         torch.cuda.empty_cache()
 
 if __name__ == "__main__":
