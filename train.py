@@ -45,8 +45,8 @@ print('train_reso_scales', train_reso_scales)
 print('test_reso_scales', test_reso_scales)
 print('full_reso_scales', full_reso_scales)
 
-# ms_from_iter = 1
-ms_from_iter = 15000
+ms_from_iter = 1
+# ms_from_iter = 15000
 
 def training(
         dataset, opt, pipe, testing_iterations, test_interval,
@@ -56,7 +56,7 @@ def training(
 ):
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
-    gaussians = GaussianModel(dataset.sh_degree, multi_occ=multi_occ, multi_dc=multi_dc)
+    gaussians = GaussianModel(dataset.sh_degree, reso_lvls=len(train_reso_scales), multi_occ=multi_occ, multi_dc=multi_dc)
     scene = Scene(dataset, gaussians, resolution_scales=full_reso_scales)
     gaussians.training_setup(opt)
     if checkpoint:
@@ -73,6 +73,8 @@ def training(
     ema_loss_for_log = 0.0
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
     first_iter += 1
+    reso_idx = 0
+    reso_iterations = [0 for _ in range(len(train_reso_scales))]
     for iteration in range(first_iter, opt.iterations + 1):
         # if iteration < opt.densify_until_iter + 10000:
         #     fade_size = 0
@@ -114,13 +116,15 @@ def training(
 
                 # half the chance of getting the highest resolution
                 if random() < 0.5:
-                    resolution_scale = train_reso_scales[0]
+                    reso_idx = 0
                 else:
-                    resolution_scale = train_reso_scales[randint(0, len(train_reso_scales)-1)]
+                    reso_idx = randint(0, len(train_reso_scales)-1)
             else:
-                resolution_scale = 1.0  # use the highest resolution only
+                reso_idx = 0  # use the highest resolution only
+            resolution_scale = train_reso_scales[reso_idx]
             viewpoint_stack = scene.getTrainCameras(resolution_scale).copy()
         viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
+        reso_iterations[reso_idx] += 1
 
         # if iteration == opt.densify_until_iter:
         if iteration == ms_from_iter:
@@ -147,7 +151,7 @@ def training(
         Ll1 = l1_loss(image, gt_image)
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
         if ms_train:
-            loss_multiplier = 1 / (math.log(resolution_scale, 2) * 3 + 1)
+            loss_multiplier = 1 / (reso_idx + 1)
             loss *= loss_multiplier
         loss.backward()
 
@@ -183,30 +187,18 @@ def training(
             if iteration < opt.densify_until_iter:
                 # Keep track of max radii in image-space for pruning
                 gaussians.max_radii2D[visibility_filter] = torch.max(gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
-                if prune_small:
-                    gaussians.max_pixel_sizes[visibility_filter] = torch.max(gaussians.max_pixel_sizes[visibility_filter], pixel_sizes[visibility_filter])
-                if resolution_scale == 1 and iteration >= 250:
-                    if iteration % 100 == 0:
-                        # prevent the min pixel sizes is outdated
-                        gaussians.min_pixel_sizes = torch.clip(gaussians.min_pixel_sizes * 1.1, -1)
-                    gaussians.min_pixel_sizes[visibility_filter] = torch.where(
-                        gaussians.min_pixel_sizes[visibility_filter] < 0,     # if not initialized
-                        torch.where(
-                            pixel_sizes[visibility_filter] > 0,                 # pixel size is valid
-                            pixel_sizes[visibility_filter],
-                            gaussians.min_pixel_sizes[visibility_filter]
-                        ),
-                        torch.where(                                            # if initialized
-                            pixel_sizes[visibility_filter] > 0,                 # pixel size is valid
-                            torch.min(gaussians.min_pixel_sizes[visibility_filter], pixel_sizes[visibility_filter]),
-                            gaussians.min_pixel_sizes[visibility_filter]
-                        ))
-                gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter)
+                gaussians.update_pixel_sizes(visibility_filter, pixel_sizes, reso_idx, iteration)
 
-                if iteration > opt.densify_from_iter and iteration % opt.densification_interval == 0:
+                gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter, reso_lvl=reso_idx)
+
+                # if iteration > opt.densify_from_iter and iteration % opt.densification_interval == 0:
+                if iteration > opt.densify_from_iter and reso_iterations[reso_idx] % opt.densification_interval == 0:
                         # and resolution_scale == train_reso_scales[0]:       # densify only at the highest resolution
-                    size_threshold = 20 if iteration > opt.opacity_reset_interval else None
-                    gaussians.densify_and_prune(opt.densify_grad_threshold, 0.005, scene.cameras_extent, size_threshold)
+                    if reso_idx == 0:
+                        size_threshold = 20 if iteration > opt.opacity_reset_interval else None
+                        gaussians.densify_and_prune(opt.densify_grad_threshold, 0.005, scene.cameras_extent, size_threshold)
+                    else:
+                        gaussians.grow_large_gaussians(opt.densify_grad_threshold, reso_idx)
                 
                 if iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
                     gaussians.reset_opacity()
