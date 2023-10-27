@@ -42,6 +42,9 @@ def render_interactive(dataset: ModelParams, iteration: int, pipeline: PipelineP
         bg_color = [1,1,1] if dataset.white_background else [0, 0, 0]
         background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
 
+        # prune gaussians far from center
+        gaussians.filter_center(5)
+
         # view = scene.getTestCameras()[0]
         view_idx = 0
         view = copy.deepcopy(scene.getTestCameras(scale=test_reso_scales[0])[view_idx])

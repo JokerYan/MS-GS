@@ -748,3 +748,29 @@ class GaussianModel:
         # add new gaussian
         self.densification_postfix(coord, new_feature_dc, new_feature_rest, new_opacity, new_scaling, new_rotation)
         return True
+
+
+    def filter_center(self, max_dist, train=False):
+        # filter the gassians to leave only the gaussians that are close to the center
+        # this is only for the purpose of visualization
+        dist = torch.norm(self.get_xyz, dim=-1)
+        mask = dist < max_dist
+
+        self._xyz = self._xyz[mask]
+        self._features_dc = self._features_dc[mask]
+        self._features_rest = self._features_rest[mask]
+        self._opacity = self._opacity[mask]
+        self._occ_multiplier = self._occ_multiplier[mask]
+        self._dc_delta = self._dc_delta[mask]
+        self._scaling = self._scaling[mask]
+        self._rotation = self._rotation[mask]
+
+        self.max_pixel_sizes = self.max_pixel_sizes[mask]
+        self.min_pixel_sizes = self.min_pixel_sizes[mask]
+        self.base_gaussian_mask = self.base_gaussian_mask[mask]
+
+        if train:
+            self.max_radii2D = self.max_radii2D[mask]
+            self.xyz_gradient_accum = self.xyz_gradient_accum[mask]    # N x L x 1
+            self.denom = self.denom[mask]               # N x L x 1
+            self.target_reso_lvl = self.target_reso_lvl[mask]
