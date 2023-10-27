@@ -52,7 +52,7 @@ def training(
         dataset, opt, pipe, testing_iterations, test_interval,
         saving_iterations, checkpoint_iterations, checkpoint, debug_from,
         ms_train=False, filter_small=False, prune_small=False, preserve_large=False,
-        multi_occ=False, multi_dc=False,
+        multi_occ=False, multi_dc=False, grow_large=False,
 ):
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
@@ -68,6 +68,8 @@ def training(
 
     iter_start = torch.cuda.Event(enable_timing = True)
     iter_end = torch.cuda.Event(enable_timing = True)
+
+    filter_large = grow_large
 
     viewpoint_stack = None
     ema_loss_for_log = 0.0
@@ -90,7 +92,7 @@ def training(
                 custom_cam, do_training, pipe.convert_SHs_python, pipe.compute_cov3D_python, keep_alive, scaling_modifer = network_gui.receive()
                 if custom_cam != None:
                     net_image = render(custom_cam, gaussians, pipe, background, scaling_modifer,
-                                       filter_small=filter_small, fade_size=fade_size)["render"]
+                                       filter_small=filter_small, filter_large=filter_large, fade_size=fade_size)["render"]
                     net_image_bytes = memoryview((torch.clamp(net_image, min=0, max=1.0) * 255).byte().permute(1, 2, 0).contiguous().cpu().numpy())
                 network_gui.send(net_image_bytes, dataset.source_path)
                 if do_training and ((iteration < int(opt.iterations)) or not keep_alive):
@@ -133,7 +135,8 @@ def training(
         # Render
         if (iteration - 1) == debug_from:
             pipe.debug = True
-        render_pkg = render(viewpoint_cam, gaussians, pipe, background, filter_small=filter_small, fade_size=fade_size)
+        render_pkg = render(viewpoint_cam, gaussians, pipe, background, filter_small=filter_small,
+                            filter_large=filter_large, fade_size=fade_size)
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
         pixel_sizes = render_pkg["pixel_sizes"]
 
@@ -186,14 +189,14 @@ def training(
             # Densification
             gaussians.update_pixel_sizes(visibility_filter, pixel_sizes, reso_idx, iteration)
 
-            if reso_idx == 0:
-                assert True
-            elif reso_idx == 4:
-                v_mask = torch.logical_and(visibility_filter, gaussians.target_reso_lvl == 0)
-                p_mask = torch.logical_and(pixel_sizes > 0, gaussians.target_reso_lvl == 0)
-                if iteration % 100 == 0:
-                    print("filter ratio:", torch.mean(v_mask.float()) / torch.mean(p_mask.float()))
-                assert True
+            # if reso_idx == 0:
+            #     assert True
+            # elif reso_idx == 4:
+            #     v_mask = torch.logical_and(visibility_filter, gaussians.target_reso_lvl == 0)
+            #     p_mask = torch.logical_and(pixel_sizes > 0, gaussians.target_reso_lvl == 0)
+            #     if iteration % 100 == 0:
+            #         print("filter ratio:", torch.mean(v_mask.float()) / torch.mean(p_mask.float()))
+            #     assert True
 
             if iteration < opt.densify_until_iter:
                 # Keep track of max radii in image-space for pruning
@@ -207,7 +210,8 @@ def training(
                         size_threshold = 20 if iteration > opt.opacity_reset_interval else None
                         gaussians.densify_and_prune(opt.densify_grad_threshold, 0.005, scene.cameras_extent, size_threshold)
                     else:
-                        gaussians.grow_large_gaussians(opt.densify_grad_threshold, reso_idx)
+                        if grow_large:
+                            gaussians.grow_large_gaussians(opt.densify_grad_threshold, reso_idx)
                 
                 if iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
                     gaussians.reset_opacity()
@@ -366,6 +370,7 @@ if __name__ == "__main__":
     parser.add_argument('--preserve_large', action='store_true', default=False, help='preserve large gaussians')
     parser.add_argument('--multi_occ', action='store_true', default=False, help='use multiple occ multiplier')
     parser.add_argument('--multi_dc', action='store_true', default=False, help='use multiple dc features delta')
+    parser.add_argument('--grow_large', action='store_true', default=False, help='grow large gaussians')
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
     
@@ -380,7 +385,8 @@ if __name__ == "__main__":
     training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.test_interval,
              args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, args.debug_from,
              ms_train=args.ms_train, filter_small=args.filter_small, prune_small=args.prune_small,
-             preserve_large=args.preserve_large, multi_occ=args.multi_occ, multi_dc=args.multi_dc)
+             preserve_large=args.preserve_large, multi_occ=args.multi_occ, multi_dc=args.multi_dc,
+             grow_large=args.grow_large)
 
     # All done
     print("\nTraining complete.")

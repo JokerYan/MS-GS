@@ -615,7 +615,7 @@ class GaussianModel:
         new_max_pixel_sizes = self.max_pixel_sizes[selected_pts_mask] * 2
         new_min_pixel_sizes = self.min_pixel_sizes[selected_pts_mask] * 2
 
-        print(f'grown {len(new_xyz)}/{len(self._xyz)} large gaussians at reso {reso_lvl}')
+        # print(f'grown {len(new_xyz)}/{len(self._xyz)} large gaussians at reso {reso_lvl}')
         self.densification_postfix(new_xyz, new_features_dc, new_features_rest,
                                    new_opacities, new_occ_multiplier, new_dc_delta,
                                    new_scaling, new_rotation, new_target_reso_lvl=new_target_reso_lvl,
