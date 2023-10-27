@@ -25,20 +25,30 @@ from gaussian_renderer import GaussianModel
 
 import cv2
 
+max_reso_pow = 7
+# max_reso_pow = 5
+# max_reso_pow = 1
+train_reso_scales = [2**i for i in range(max_reso_pow + 1)]        # 1~128
+# test_reso_scales = train_reso_scales + [(2**i + 2**(i+1)) / 2 for i in range(max_reso_pow)]     # 1~128, include half scales
+test_reso_scales = train_reso_scales    # without half scales
+test_reso_scales = sorted(test_reso_scales)
+full_reso_scales = sorted(list(set(train_reso_scales + test_reso_scales)))
 
 def render_interactive(dataset: ModelParams, iteration: int, pipeline: PipelineParams, anti_alias=False):
     with torch.no_grad():
         gaussians = GaussianModel(dataset.sh_degree)
-        scene = Scene(dataset, gaussians, load_iteration=iteration, shuffle=False)
+        scene = Scene(dataset, gaussians, load_iteration=iteration, shuffle=False, resolution_scales=full_reso_scales)
 
         bg_color = [1,1,1] if dataset.white_background else [0, 0, 0]
         background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
 
         # view = scene.getTestCameras()[0]
         view_idx = 0
-        view = copy.deepcopy(scene.getTestCameras()[view_idx])
+        view = copy.deepcopy(scene.getTestCameras(scale=test_reso_scales[0])[view_idx])
         gs_scale = 1.0          # size of scale compared to the original size
         fade_size = 1.0
+        reso_idx = 0
+        view_resolution = None
         if anti_alias:
             filter_small = True
         else:
@@ -68,6 +78,13 @@ def render_interactive(dataset: ModelParams, iteration: int, pipeline: PipelineP
             # normalize depth
             depth = torch.clip(depth / torch.max(depth), 0, 1)
             depth = depth.cpu().numpy()
+
+            if view_resolution is None:
+                view_resolution = rendering.shape[:2]
+            else:
+                rendering = cv2.resize(rendering, view_resolution[::-1])
+                acc_pixel_size = cv2.resize(acc_pixel_size, view_resolution[::-1])
+                depth = cv2.resize(depth, view_resolution[::-1])
 
             cv2.imshow("rendering", rendering)
             cv2.setWindowTitle("rendering", f"{render_time * 1000:.2f}ms")
@@ -103,14 +120,21 @@ def render_interactive(dataset: ModelParams, iteration: int, pipeline: PipelineP
                 fade_size = min(2.0, fade_size + 0.1)
             elif key == ord('x'):
                 view_idx = (view_idx - 1) % len(scene.getTestCameras())
-                view = copy.deepcopy(scene.getTestCameras()[view_idx])
+                view = copy.deepcopy(scene.getTestCameras(scale=test_reso_scales[reso_idx])[view_idx])
             elif key == ord('c'):
                 view_idx = (view_idx + 1) % len(scene.getTestCameras())
-                view = copy.deepcopy(scene.getTestCameras()[view_idx])
+                view = copy.deepcopy(scene.getTestCameras(scale=test_reso_scales[reso_idx])[view_idx])
             elif key == ord('z'):
-                view = copy.deepcopy(scene.getTestCameras()[view_idx])
+                view = copy.deepcopy(scene.getTestCameras(scale=test_reso_scales[reso_idx])[view_idx])
                 gs_scale = 1.0
                 fade_size = 1.0
+                reso_idx = 0
+            elif key == ord('/'):
+                reso_idx = min(reso_idx + 1, max_reso_pow)
+                view = copy.deepcopy(scene.getTestCameras(scale=test_reso_scales[reso_idx])[view_idx])
+            elif key == ord('.'):
+                reso_idx = max(reso_idx - 1, 0)
+                view = copy.deepcopy(scene.getTestCameras(scale=test_reso_scales[reso_idx])[view_idx])
 
 if __name__ == "__main__":
     # Set up command line argument parser

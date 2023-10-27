@@ -184,11 +184,20 @@ def training(
             #           torch.median(gaussians.min_pixel_sizes), torch.min(pixel_sizes), torch.max(pixel_sizes))
 
             # Densification
+            gaussians.update_pixel_sizes(visibility_filter, pixel_sizes, reso_idx, iteration)
+
+            if reso_idx == 0:
+                assert True
+            elif reso_idx == 4:
+                v_mask = torch.logical_and(visibility_filter, gaussians.target_reso_lvl == 0)
+                p_mask = torch.logical_and(pixel_sizes > 0, gaussians.target_reso_lvl == 0)
+                if iteration % 100 == 0:
+                    print("filter ratio:", torch.mean(v_mask.float()) / torch.mean(p_mask.float()))
+                assert True
+
             if iteration < opt.densify_until_iter:
                 # Keep track of max radii in image-space for pruning
                 gaussians.max_radii2D[visibility_filter] = torch.max(gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
-                gaussians.update_pixel_sizes(visibility_filter, pixel_sizes, reso_idx, iteration)
-
                 gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter, reso_lvl=reso_idx)
 
                 # if iteration > opt.densify_from_iter and iteration % opt.densification_interval == 0:

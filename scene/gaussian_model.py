@@ -379,8 +379,8 @@ class GaussianModel:
         self._scaling = nn.Parameter(torch.tensor(scales, dtype=torch.float, device="cuda").requires_grad_(True))
         self._rotation = nn.Parameter(torch.tensor(rots, dtype=torch.float, device="cuda").requires_grad_(True))
         self.base_gaussian_mask = torch.from_numpy(base_gaussian_mask).to(device="cuda", dtype=torch.bool)
-        self.max_pixel_sizes = torch.from_numpy(max_pixel_sizes).to(device="cuda", dtype=torch.float)
-        self.min_pixel_sizes = torch.from_numpy(min_pixel_sizes).to(device="cuda", dtype=torch.float)
+        self.max_pixel_sizes = torch.from_numpy(max_pixel_sizes.copy()).to(device="cuda", dtype=torch.float)
+        self.min_pixel_sizes = torch.from_numpy(min_pixel_sizes.copy()).to(device="cuda", dtype=torch.float)
 
         self.active_sh_degree = self.max_sh_degree
 
@@ -463,7 +463,7 @@ class GaussianModel:
 
     def densification_postfix(self, new_xyz, new_features_dc, new_features_rest,
                               new_opacities, new_occ_multiplier, new_dc_delta, new_scaling, new_rotation,
-                              new_target_reso_lvl, reso_lvl=0):
+                              new_target_reso_lvl, new_max_pixel_sizes, new_min_pixel_sizes, reso_lvl=0):
         d = {"xyz": new_xyz,
         "f_dc": new_features_dc,
         "f_rest": new_features_rest,
@@ -494,9 +494,10 @@ class GaussianModel:
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
         # self.max_pixel_sizes = torch.zeros((self.get_xyz.shape[0]), device="cuda")
         # need to add zeros at the back of the current max_pixel_sizes when doing densification
-        new_max_pixel_sizes = torch.ones((len(new_xyz)), device="cuda") * -1
+
+        # new_max_pixel_sizes = torch.ones((len(new_xyz)), device="cuda") * -1
         self.max_pixel_sizes = torch.cat((self.max_pixel_sizes, new_max_pixel_sizes), dim=0)
-        new_min_pixel_sizes = torch.ones((len(new_xyz)), device="cuda") * -1
+        # new_min_pixel_sizes = torch.ones((len(new_xyz)), device="cuda") * -1
         self.min_pixel_sizes = torch.cat((self.min_pixel_sizes, new_min_pixel_sizes), dim=0)
         new_base_gaussian_mask = torch.zeros((len(new_xyz)), device="cuda", dtype=torch.bool)
         self.base_gaussian_mask = torch.cat((self.base_gaussian_mask, new_base_gaussian_mask), dim=0)
@@ -525,9 +526,17 @@ class GaussianModel:
         new_occ_multiplier = self._occ_multiplier[selected_pts_mask].repeat(N,1,1)
         new_dc_delta = self._dc_delta[selected_pts_mask].repeat(N,1,1)
         new_target_reso_lvl = self.target_reso_lvl[selected_pts_mask].repeat(N)
+        new_max_pixel_sizes = self.max_pixel_sizes[selected_pts_mask].repeat(N) / (0.8*N)
+        new_min_pixel_sizes = self.min_pixel_sizes[selected_pts_mask].repeat(N) / (0.8*N)
+
+        # # instead of pruning them, we push them to higher levels
+        # self.target_reso_lvl[selected_pts_mask] = torch.clip(self.target_reso_lvl[selected_pts_mask] + 2, max=self.reso_lvls-1)
+        # self.max_pixel_sizes[selected_pts_mask] = torch.ones_like(self.max_pixel_sizes[selected_pts_mask]) * -1
+        # self.min_pixel_sizes[selected_pts_mask] = torch.ones_like(self.min_pixel_sizes[selected_pts_mask]) * -1
 
         self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_opacity, new_occ_multiplier,
-                                   new_dc_delta, new_scaling, new_rotation, new_target_reso_lvl)
+                                   new_dc_delta, new_scaling, new_rotation, new_target_reso_lvl,
+                                   new_max_pixel_sizes, new_min_pixel_sizes)
 
         prune_filter = torch.cat((selected_pts_mask, torch.zeros(N * selected_pts_mask.sum(), device="cuda", dtype=bool)))
         self.prune_points(prune_filter)
@@ -547,10 +556,13 @@ class GaussianModel:
         new_scaling = self._scaling[selected_pts_mask]
         new_rotation = self._rotation[selected_pts_mask]
         new_target_reso_lvl = self.target_reso_lvl[selected_pts_mask]
+        new_max_pixel_sizes = self.max_pixel_sizes[selected_pts_mask]
+        new_min_pixel_sizes = self.min_pixel_sizes[selected_pts_mask]
 
         self.densification_postfix(new_xyz, new_features_dc, new_features_rest,
                                    new_opacities, new_occ_multiplier, new_dc_delta,
-                                   new_scaling, new_rotation, new_target_reso_lvl)
+                                   new_scaling, new_rotation, new_target_reso_lvl,
+                                   new_max_pixel_sizes, new_min_pixel_sizes)
 
     def densify_and_prune(self, max_grad, min_opacity, extent, max_screen_size):
         reso_lvl = 0
@@ -578,40 +590,50 @@ class GaussianModel:
         grads = self.xyz_gradient_accum[:, reso_lvl] / self.denom[:, reso_lvl]      # N x 1
         grads[grads.isnan()] = 0.0
 
+        # grad_threshold *= 3
         selected_pts_mask = torch.where(torch.norm(grads, dim=-1) >= grad_threshold, True, False)
+
+        grow_mult = (reso_lvl + 1) / (self.target_reso_lvl[selected_pts_mask] + 1)
 
         new_xyz = self._xyz[selected_pts_mask]
         new_features_dc = self._features_dc[selected_pts_mask]
         new_features_rest = self._features_rest[selected_pts_mask]
         new_opacities = self.inverse_opacity_activation(
             self.get_opacity[selected_pts_mask] / 2
+            # self.get_opacity[selected_pts_mask] / grow_mult[:, None]
         )
         new_occ_multiplier = self._occ_multiplier[selected_pts_mask]
         new_dc_delta = self._dc_delta[selected_pts_mask]
         new_scaling = self.scaling_inverse_activation(
             self.get_scaling[selected_pts_mask] * 2
+            # self.get_scaling[selected_pts_mask] * grow_mult[:, None]
         )
         new_rotation = self._rotation[selected_pts_mask]
         # new gaussians counts at this reso lvl
         new_target_reso_lvl = torch.ones_like(self.target_reso_lvl[selected_pts_mask]) * reso_lvl
 
+        new_max_pixel_sizes = self.max_pixel_sizes[selected_pts_mask] * 2
+        new_min_pixel_sizes = self.min_pixel_sizes[selected_pts_mask] * 2
+
         print(f'grown {len(new_xyz)}/{len(self._xyz)} large gaussians at reso {reso_lvl}')
         self.densification_postfix(new_xyz, new_features_dc, new_features_rest,
-                                   new_opacities, new_occ_multiplier, new_dc_delta, new_scaling, new_rotation,
-                                   new_target_reso_lvl=new_target_reso_lvl, reso_lvl=reso_lvl)
+                                   new_opacities, new_occ_multiplier, new_dc_delta,
+                                   new_scaling, new_rotation, new_target_reso_lvl=new_target_reso_lvl,
+                                   new_max_pixel_sizes=new_max_pixel_sizes, new_min_pixel_sizes=new_min_pixel_sizes,
+                                   reso_lvl=reso_lvl)
 
     def update_pixel_sizes(self, visibility_filter, pixel_sizes, reso_lvl, iteration):
         # if reso_lvl == 0 and iteration >= 250:
         if iteration >= 250:
             mask = torch.logical_and(visibility_filter, self.target_reso_lvl == reso_lvl)
-            self.max_pixel_sizes[mask] = torch.max(self.max_pixel_sizes[mask], pixel_sizes[mask])
             if reso_lvl > 0 and torch.any(self.target_reso_lvl == reso_lvl):
                 assert True
 
-            if iteration < 15000 and iteration % 100 == 0:
-                # prevent the min pixel sizes is outdated
-                self.min_pixel_sizes = torch.clip(self.min_pixel_sizes * 1.1, -1)
-                self.max_pixel_sizes = self.max_pixel_sizes * 0.9
+            # prevent the min pixel sizes is outdated
+            self.min_pixel_sizes[mask] = torch.clip(self.min_pixel_sizes[mask] * 1.1, -1)
+            self.max_pixel_sizes[mask] = self.max_pixel_sizes[mask] * 0.9
+
+            self.max_pixel_sizes[mask] = torch.max(self.max_pixel_sizes[mask], pixel_sizes[mask])
 
             self.min_pixel_sizes[mask] = torch.where(
                 self.min_pixel_sizes[mask] < 0,  # if not initialized
