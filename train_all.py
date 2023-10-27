@@ -1,3 +1,4 @@
+import os
 import sys
 from utils.general_utils import safe_state
 from argparse import ArgumentParser, Namespace
@@ -25,7 +26,6 @@ if __name__ == "__main__":
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])
     parser.add_argument("--start_checkpoint", type=str, default=None)
     args = parser.parse_args(sys.argv[1:])
-    args.save_iterations.append(args.iterations)
 
     print("Optimizing " + args.model_path)
 
@@ -37,23 +37,56 @@ if __name__ == "__main__":
         "bonsai", "counter", "garden", "kitchen", "room", "stump"
     ]
     method_dict = {
+        "base": {
+            "ms_train": False,
+            "filter_small": False,
+            "prune_small": False,
+            "grow_large": False,
+            "multi_occ": False,
+            "multi_dc": False,
+            "preserve_large": False,
+            "iterations": 30000
+        },
         'ms': {
             "ms_train": True,
-            "prune_small": True,
+            "filter_small": True,
+            "prune_small": False,
             "grow_large": True,
-        },
-        "base": {
-
+            "multi_occ": False,
+            "multi_dc": False,
+            "preserve_large": False,
+            "iterations": 50000
         }
     }
+
+    source_dir = args.source_path
+    model_dir = args.model_path
 
     # Start GUI server, configure and run training
     network_gui.init(args.ip, args.port)
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
-    # training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.test_interval,
-    #          args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, args.debug_from,
-    #          ms_train=args.ms_train, filter_small=args.filter_small, prune_small=args.prune_small,
-    #          preserve_large=args.preserve_large, multi_occ=args.multi_occ, multi_dc=args.multi_dc)
+    torch.cuda.empty_cache()    # Free up memory before training, hopefully this will work
+
+    for scene in scene_list:
+        for method in method_dict:
+            args.ms_train = method_dict[method]["ms_train"]
+            args.filter_small = method_dict[method]["filter_small"]
+            args.prune_small = method_dict[method]["prune_small"]
+            args.preserve_large = method_dict[method]["grow_large"]
+            args.multi_occ = method_dict[method]["multi_occ"]
+            args.multi_dc = method_dict[method]["multi_dc"]
+            args.preserve_large = method_dict[method]["preserve_large"]
+            args.iterations = method_dict[method]["iterations"]
+            if args.iterations not in args.save_iterations:
+                args.save_iterations.append(args.iterations)
+
+            args.source_path = os.path.join(source_dir, scene)
+            args.model_path = os.path.join(model_dir, scene, method)
+
+            training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.test_interval,
+                     args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, args.debug_from,
+                     ms_train=args.ms_train, filter_small=args.filter_small, prune_small=args.prune_small,
+                     preserve_large=args.preserve_large, multi_occ=args.multi_occ, multi_dc=args.multi_dc)
 
     # source_path
     # model_path
