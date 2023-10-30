@@ -13,6 +13,7 @@ import math
 import cv2
 import torch
 import numpy as np
+import open3d.ml.torch as ml3d
 
 from scene.cameras import Camera
 from utils.general_utils import inverse_sigmoid, get_expon_lr_func, build_rotation
@@ -569,6 +570,9 @@ class GaussianModel:
         grads = self.xyz_gradient_accum[:, reso_lvl] / self.denom[:, reso_lvl]      # N x 1
         grads[grads.isnan()] = 0.0
 
+        # does not densify gaussians from other lvls
+        grads[self.target_reso_lvl != 0] = 0.0
+
         self.densify_and_clone(grads, max_grad, extent)
         self.densify_and_split(grads, max_grad, extent)
 
@@ -581,6 +585,9 @@ class GaussianModel:
             prune_size_mask = torch.logical_and(prune_size_mask, self.target_reso_lvl == 0)
 
             prune_mask = torch.logical_or(prune_size_mask, prune_mask)
+
+        # debug, do not prune gaussians from other lvls at all
+        prune_mask = torch.logical_and(prune_mask, self.target_reso_lvl == 0)
 
         self.prune_points(prune_mask)
 
@@ -629,7 +636,7 @@ class GaussianModel:
             if reso_lvl > 0 and torch.any(self.target_reso_lvl == reso_lvl):
                 assert True
 
-            # prevent the min pixel sizes is outdated
+            # prevent the min/max pixel sizes is outdated
             self.min_pixel_sizes[mask] = torch.clip(self.min_pixel_sizes[mask] * 1.1, -1)
             self.max_pixel_sizes[mask] = self.max_pixel_sizes[mask] * 0.9
 
@@ -749,6 +756,65 @@ class GaussianModel:
         self.densification_postfix(coord, new_feature_dc, new_feature_rest, new_opacity, new_scaling, new_rotation)
         return True
 
+    def insert_large_gaussians(self, mask, cur_min_pixel_sizes, reso_lvl, scene_extent):
+        # scale positions from (-inf, inf) to (-2, 2)
+        # everything within the scene extent are scaled linearly to (-1, 1)
+        # everything beyond that are scaled to (-2, 2) inversely, by (2 - 1/x)
+        rel_pos = self._xyz[mask] / scene_extent
+        rel_pos = torch.where(rel_pos > 1, 2 - 1/rel_pos, rel_pos)
+        rel_pos = rel_pos.cpu()
+
+        # aggregate into voxels
+        N = len(self._xyz)      # total_number of points
+        # voxel_reso = 0.02 * (1.5 ** reso_lvl)
+        voxel_reso = 0.02
+        voxel_pooling = ml3d.layers.VoxelPooling(position_fn='center', feature_fn='average')
+        # voxel_pooling = ml3d.layers.VoxelPooling(position_fn='center', feature_fn='nearest_neighbor')
+        # voxel_pooling_max = ml3d.layers.VoxelPooling(position_fn='center', feature_fn='max')
+
+        voxel_xyz = voxel_pooling(rel_pos, self._xyz.reshape([N, -1])[mask].cpu(), voxel_reso).pooled_features.cuda()
+        voxel_feature_dc = voxel_pooling(rel_pos, self._features_dc.reshape([N, -1])[mask].cpu(), voxel_reso).pooled_features.cuda()
+        voxel_feature_rest = voxel_pooling(rel_pos, self._features_rest.reshape([N, -1])[mask].cpu(), voxel_reso).pooled_features.cuda()
+        voxel_opacity = voxel_pooling(rel_pos, self._opacity.reshape([N, -1])[mask].cpu(), voxel_reso).pooled_features.cuda()
+        voxel_occ_multiplier = voxel_pooling(rel_pos, self._occ_multiplier.reshape([N, -1])[mask].cpu(), voxel_reso).pooled_features.cuda()
+        voxel_dc_delta = voxel_pooling(rel_pos, self._dc_delta.reshape([N, -1])[mask].cpu(), voxel_reso).pooled_features.cuda()
+        voxel_rotation = voxel_pooling(rel_pos, self._rotation.reshape([N, -1])[mask].cpu(), voxel_reso).pooled_features.cuda()
+        voxel_max_pixel_sizes = voxel_pooling(rel_pos, self.max_pixel_sizes.reshape([N, -1])[mask].cpu(), voxel_reso).pooled_features.cuda()
+        voxel_min_pixel_sizes = voxel_pooling(rel_pos, self.min_pixel_sizes.reshape([N, -1])[mask].cpu(), voxel_reso).pooled_features.cuda()
+        voxel_scaling = voxel_pooling(rel_pos, self._scaling.reshape([N, -1])[mask].cpu(), voxel_reso).pooled_features.cuda()
+        voxel_cur_min_pixel_sizes = voxel_pooling(rel_pos, cur_min_pixel_sizes.reshape([N, -1])[mask].cpu(), voxel_reso).pooled_features.cuda()
+
+        # reshape back
+        M = len(voxel_xyz)    # number of voxels
+        voxel_xyz = voxel_xyz.reshape([M, *self._xyz.shape[1:]])
+        voxel_feature_dc = voxel_feature_dc.reshape([M, *self._features_dc.shape[1:]])
+        voxel_feature_rest = voxel_feature_rest.reshape([M, *self._features_rest.shape[1:]])
+        voxel_opacity = voxel_opacity.reshape([M, *self._opacity.shape[1:]])
+        voxel_occ_multiplier = voxel_occ_multiplier.reshape([M, *self._occ_multiplier.shape[1:]])
+        voxel_dc_delta = voxel_dc_delta.reshape([M, *self._dc_delta.shape[1:]])
+        voxel_rotation = voxel_rotation.reshape([M, *self._rotation.shape[1:]])
+        voxel_max_pixel_sizes = voxel_max_pixel_sizes.reshape([M, *self.max_pixel_sizes.shape[1:]])
+        voxel_min_pixel_sizes = voxel_min_pixel_sizes.reshape([M, *self.min_pixel_sizes.shape[1:]])
+        voxel_scaling = voxel_scaling.reshape([M, *self._scaling.shape[1:]])    # (M, 3)
+        voxel_cur_min_pixel_sizes = voxel_cur_min_pixel_sizes.reshape([M, 1])   # (M, 1)
+
+        # increase size and reduce opacity
+        voxel_cur_min_pixel_sizes = torch.clip(voxel_cur_min_pixel_sizes, min=0.1, max=2.0)  # clip to 0.1~2.0
+        voxel_scaling_factor = 2.0 / voxel_cur_min_pixel_sizes
+        voxel_scaling = self.scaling_inverse_activation(self.scaling_activation(voxel_scaling) * voxel_scaling_factor)
+        voxel_opacity = self.inverse_opacity_activation(self.opacity_activation(voxel_opacity) / 1)
+        # voxel_max_pixel_sizes = voxel_max_pixel_sizes * 4
+        # voxel_min_pixel_sizes = voxel_min_pixel_sizes * 4
+        voxel_max_pixel_sizes = torch.ones((M), device="cuda") * -1
+        voxel_min_pixel_sizes = torch.ones((M), device="cuda") * -1
+
+        self.densification_postfix(voxel_xyz, voxel_feature_dc, voxel_feature_rest,
+                                   voxel_opacity, voxel_occ_multiplier, voxel_dc_delta,
+                                   voxel_scaling, voxel_rotation, reso_lvl=reso_lvl,
+                                   new_max_pixel_sizes=voxel_max_pixel_sizes, new_min_pixel_sizes=voxel_min_pixel_sizes,
+                                   new_target_reso_lvl=torch.ones_like(voxel_max_pixel_sizes) * reso_lvl,
+                                   )
+        print(f"Inserted {len(voxel_xyz)} large gaussians at reso {2**reso_lvl}")
 
     def filter_center(self, max_dist, train=False):
         # filter the gassians to leave only the gaussians that are close to the center
