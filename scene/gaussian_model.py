@@ -251,11 +251,14 @@ class GaussianModel:
             for param in param_group['params']:
                 # register hook
                 if len(param.shape) == 1:
-                    param.register_hook(lambda grad: grad * mask)
+                    # param.register_hook(lambda grad: grad * mask)
+                    param.grad *= mask
                 elif len(param.shape) == 2:
-                    param.register_hook(lambda grad: grad * mask[:, None])
+                    # param.register_hook(lambda grad: grad * mask[:, None])
+                    param.grad *= mask[:, None]
                 elif len(param.shape) == 3:
-                    param.register_hook(lambda grad: grad * mask[:, None, None])
+                    # param.register_hook(lambda grad: grad * mask[:, None, None])
+                    param.grad *= mask[:, None, None]
 
     def start_ms_lr(self):
         # turn of base color optimization, update dc delta only
@@ -819,7 +822,7 @@ class GaussianModel:
         voxel_cur_min_pixel_sizes = voxel_cur_min_pixel_sizes.reshape([M, 1])   # (M, 1)
 
         # increase size and reduce opacity
-        voxel_cur_min_pixel_sizes = torch.clip(voxel_cur_min_pixel_sizes, min=0.1, max=2.0)  # clip to 0.1~2.0
+        voxel_cur_min_pixel_sizes = torch.clip(voxel_cur_min_pixel_sizes, min=0.25, max=2.0)  # clip to 0.1~2.0
         voxel_scaling_factor = 2.0 / voxel_cur_min_pixel_sizes
         voxel_scaling = self.scaling_inverse_activation(self.scaling_activation(voxel_scaling) * voxel_scaling_factor)
         voxel_opacity = self.inverse_opacity_activation(self.opacity_activation(voxel_opacity) / 1)

@@ -16,6 +16,8 @@ import math
 import cv2
 import torch
 from random import randint, random, choice
+
+from lpipsPyTorch import lpips
 from utils.loss_utils import l1_loss, ssim
 from gaussian_renderer import render, network_gui
 import sys
@@ -46,6 +48,7 @@ print('test_reso_scales', test_reso_scales)
 print('full_reso_scales', full_reso_scales)
 
 ms_from_iter = 1
+# ms_from_iter = 5000
 # ms_from_iter = 15000
 
 def training(
@@ -101,10 +104,6 @@ def training(
         fade_size = 0
         filter_large = (grow_large or insert_large)
 
-        # # DEBUG
-        # insert_large = False
-        # filter_large = True if iteration > 1000 else False
-
         if network_gui.conn == None:
             network_gui.try_connect()
         while network_gui.conn != None:
@@ -138,7 +137,7 @@ def training(
             #     resolution_scale = train_reso_scales[randint(0, len(train_reso_scales)-1)]
 
                 # half the chance of getting the highest resolution
-                if random() < 0.5:
+                if random() < 0.75:
                     reso_idx = 0
                 else:
                     if insert_large:
@@ -191,7 +190,7 @@ def training(
         Ll1 = l1_loss(image, gt_image)
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
         if ms_train:
-            loss_multiplier = 1 / (reso_idx + 1)
+            loss_multiplier = 1 / (reso_idx * 2 + 1)
             loss *= loss_multiplier
         loss.backward()
 
@@ -453,6 +452,8 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed,
             if config['cameras'] and len(config['cameras']) > 0:
                 l1_test = 0.0
                 psnr_test = 0.0
+                ssim_test = 0.0
+                lpips_test = 0.0
                 render_time = 0.0
                 for idx, viewpoint in enumerate(config['cameras']):
                     torch.cuda.synchronize()
@@ -484,7 +485,11 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed,
                                 gt_image[None], global_step=iteration)
                     l1_test += l1_loss(image, gt_image).mean().double()
                     psnr_test += psnr(image, gt_image).mean().double()
+                    ssim_test += ssim(image, gt_image).mean().double()
+                    lpips_test += lpips(image, gt_image).mean().double()
                 psnr_test /= len(config['cameras'])
+                ssim_test /= len(config['cameras'])
+                lpips_test /= len(config['cameras'])
                 l1_test /= len(config['cameras'])
                 render_time /= len(config['cameras'])
                 # print(f"\n[ITER {iteration}] Evaluating {config['name']} s{reso_scale:.1f}: L1 {l1_test} PSNR {psnr_test}")
@@ -492,6 +497,8 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed,
                 if tb_writer:
                     tb_writer.add_scalar(f"{config['name']}/s{reso_scale:.1f}_loss_viewpoint - l1_loss", l1_test, iteration)
                     tb_writer.add_scalar(f"{config['name']}/s{reso_scale:.1f}_loss_viewpoint - psnr", psnr_test, iteration)
+                    tb_writer.add_scalar(f"{config['name']}/s{reso_scale:.1f}_loss_viewpoint - ssim", ssim_test, iteration)
+                    tb_writer.add_scalar(f"{config['name']}/s{reso_scale:.1f}_loss_viewpoint - lpips", lpips_test, iteration)
                     tb_writer.add_scalar(f"{config['name']}/s{reso_scale:.1f}_loss_viewpoint - render_time", render_time, iteration)
         print(output_str)
 
