@@ -101,9 +101,9 @@ def training(
         fade_size = 0
         filter_large = (grow_large or insert_large)
 
-        # DEBUG
-        insert_large = False
-        filter_large = True if iteration > 1000 else False
+        # # DEBUG
+        # insert_large = False
+        # filter_large = True if iteration > 1000 else False
 
         if network_gui.conn == None:
             network_gui.try_connect()
