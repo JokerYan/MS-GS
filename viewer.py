@@ -43,7 +43,7 @@ def render_interactive(dataset: ModelParams, iteration: int, pipeline: PipelineP
         background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
 
         # prune gaussians far from center
-        gaussians.filter_center(5)
+        gaussians.filter_center(scene.cameras_extent)
 
         # view = scene.getTestCameras()[0]
         view_idx = 0
@@ -54,15 +54,17 @@ def render_interactive(dataset: ModelParams, iteration: int, pipeline: PipelineP
         view_resolution = None
         if anti_alias:
             filter_small = True
+            filter_large = True
         else:
             filter_small = False
+            filter_large = False
         while True:
             view.cal_transform()
             torch.cuda.synchronize()
             time_start = time.time()
 
             results = render(view, gaussians, pipeline, background, scaling_modifier=gs_scale,
-                             filter_small=filter_small, fade_size=fade_size)
+                             filter_small=filter_small, filter_large=filter_large, fade_size=fade_size)
             rendering = results["render"]
             acc_pixel_size = results["acc_pixel_size"]
             depth = results["depth"]

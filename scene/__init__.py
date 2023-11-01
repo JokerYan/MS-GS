@@ -70,7 +70,7 @@ class Scene:
         if os.path.exists(camera_cache_path):
             print("Loading cameras from cache")
             camera_data = pickle.load(open(camera_cache_path, "rb"))
-            scene_info = camera_data["scene_info"]
+            # scene_info = camera_data["scene_info"]
             self.train_cameras = camera_data["train_cameras"]
             self.test_cameras = camera_data["test_cameras"]
             print("Camera cache loaded")
@@ -84,7 +84,7 @@ class Scene:
                 print("Loading Test Cameras")
                 self.test_cameras[resolution_scale] = cameraList_from_camInfos(scene_info.test_cameras, resolution_scale, args)
             camera_data = {
-                "scene_info": scene_info,
+                # "scene_info": scene_info,
                 "train_cameras": self.train_cameras,
                 "test_cameras": self.test_cameras
             }

@@ -55,6 +55,7 @@ def training(
         multi_occ=False, multi_dc=False, grow_large=False, insert_large=False
 ):
     first_iter = 0
+    last_reset_opacity_iter = None
     tb_writer = prepare_output_and_logger(dataset)
     gaussians = GaussianModel(dataset.sh_degree, reso_lvls=len(train_reso_scales), multi_occ=multi_occ, multi_dc=multi_dc)
     scene = Scene(dataset, gaussians, resolution_scales=full_reso_scales)
@@ -69,14 +70,22 @@ def training(
     iter_start = torch.cuda.Event(enable_timing = True)
     iter_end = torch.cuda.Event(enable_timing = True)
 
-    filter_large = grow_large or insert_large
     if insert_large:
         # increase reso at these iterations, starting from 1 (2x)
         # inc_reso_at = torch.tensor([5000 + 1000 * (i + 1) for i in range(len(train_reso_scales)-1)])
         # inc_reso_at = torch.tensor([1000 * (i + 1) for i in range(len(train_reso_scales)-1)])
         # inc_reso_idx = torch.tensor([(i + 1) for i in range(len(train_reso_scales)-1)])
-        inc_reso_at = torch.tensor([990])
-        inc_reso_idx = torch.tensor([4])
+        # inc_reso_at = torch.tensor([990])
+        # inc_reso_idx = torch.tensor([4])
+        # inc_reso_at = torch.tensor([940, 950, 960, 970, 980, 990])
+        # inc_reso_idx = torch.tensor([2, 3, 4, 5, 6, 7])
+        # inc_reso_at = torch.tensor([5000 - 20, 5000 - 30, 5000 - 10])
+        base_iter = 1000
+        # inc_reso_at = torch.tensor([base_iter - 30, base_iter - 20, base_iter - 10])
+        inc_reso_at = torch.tensor([base_iter + 10, base_iter + 20, base_iter + 30])
+        inc_reso_idx = torch.tensor([2, 4, 6])
+        # inc_reso_idx_train = [[1, 2], [3, 4], [5, 6, 7]]
+        inc_reso_idx_train = [[2, 3], [4, 5], [6, 7]]
 
     viewpoint_stack = None
     ema_loss_for_log = 0.0
@@ -90,6 +99,11 @@ def training(
         # else:
         #     fade_size = 1.0
         fade_size = 0
+        filter_large = (grow_large or insert_large)
+
+        # DEBUG
+        insert_large = False
+        filter_large = True if iteration > 1000 else False
 
         if network_gui.conn == None:
             network_gui.try_connect()
@@ -136,10 +150,21 @@ def training(
                         # reso_idx = randint(0, max_cur_reso_idx)
 
                         reso_idx_mask = iteration > inc_reso_at
-                        reso_idx_list = inc_reso_idx[reso_idx_mask].tolist() + [0]
+                        reso_idx_mask_list = torch.arange(0, len(inc_reso_at))[reso_idx_mask]
+                        reso_idx_list = [0]
+                        for idx in reso_idx_mask_list:
+                            reso_idx_list += inc_reso_idx_train[idx]
+                        # reso_idx_list = inc_reso_idx[reso_idx_mask].tolist() + [0]
+                        # reso_idx = choice(reso_idx_list)
+
+                        # choose the one of the least trained resolution
+                        reso_iterations_list = [reso_iterations[idx] for idx in reso_idx_list]
+                        min_reso_iterations = min(reso_iterations_list)
+                        reso_idx_list = [reso_idx_list[i] for i in range(len(reso_idx_list)) if reso_iterations_list[i] == min_reso_iterations]
                         reso_idx = choice(reso_idx_list)
-                        # if reso_idx_mask.sum() > 0:
-                        #     print("choosing reso idx:", reso_idx_list, reso_idx)
+
+                        if reso_idx_mask.sum() > 0:
+                            print("choosing reso idx:", reso_idx_list, reso_idx)
                     else:
                         reso_idx = randint(0, len(train_reso_scales)-1)
             else:
@@ -160,9 +185,6 @@ def training(
                             filter_large=filter_large, fade_size=fade_size)
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
         pixel_sizes = render_pkg["pixel_sizes"]
-
-        if reso_idx == 4:
-            assert True     # for debug
 
         # Loss
         gt_image = viewpoint_cam.original_image.cuda()
@@ -198,7 +220,8 @@ def training(
                     gaussians.update_base_gaussian_mask(visibility_filter)
 
             # Densification
-            gaussians.update_pixel_sizes(visibility_filter, pixel_sizes, reso_idx, iteration)
+            if iteration >= 250 and (last_reset_opacity_iter is None or iteration - last_reset_opacity_iter > 250):
+                gaussians.update_pixel_sizes(visibility_filter, pixel_sizes, reso_idx, iteration)
 
             if iteration < opt.densify_until_iter:
                 # Keep track of max radii in image-space for pruning
@@ -216,6 +239,7 @@ def training(
                             gaussians.grow_large_gaussians(opt.densify_grad_threshold, reso_idx)
                 
                 if iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
+                    last_reset_opacity_iter = iteration
                     gaussians.reset_opacity()
 
                 if prune_small and iteration > opt.densify_from_iter and iteration % 1000 == 0:
@@ -262,7 +286,11 @@ def training(
                     ratios_sum += torch.mean(diff_vis_filter.float())
                 # print(f"avg ratio: {ratios_sum/len(base_vis_filter_list):.3f} of {len(base_vis_filter_list)}, total ratio: {torch.mean(all_diff_vis_filter.float()):.3f}")
 
-                all_diff_vis_filter = min_pixel_sizes < pixel_size_threshold
+                # all_diff_vis_filter = min_pixel_sizes < pixel_size_threshold
+                all_diff_vis_filter = torch.logical_and(
+                    min_pixel_sizes < pixel_size_threshold,
+                    gaussians.target_reso_lvl == base_reso_idx
+                )
                 print(f"reso {next_reso_idx} diff_vis_filter: {torch.mean(all_diff_vis_filter.float()):.3f}")
 
                 # # show chosen points
@@ -419,7 +447,7 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed,
         #                       {'name': 'train', 'cameras' : [scene.getTrainCameras(reso_scale)[idx % len(scene.getTrainCameras())] for idx in range(5, 30, 5)]})
 
         output_str = f"[ITER {iteration}] Evaluating:"
-        output_str += f" {torch.sum(scene.gaussians.target_reso_lvl > 0)} large gs "
+        # output_str += f" {torch.sum(scene.gaussians.target_reso_lvl > 0)} large gs "
         for config in validation_configs:
             reso_scale = config['scale']
             if config['cameras'] and len(config['cameras']) > 0:

@@ -244,6 +244,19 @@ class GaussianModel:
                                                     lr_delay_mult=training_args.position_lr_delay_mult,
                                                     max_steps=training_args.position_lr_max_steps)
 
+    def mask_lvl_param_grad(self, lvl):
+        # mask out the gradient of the parameters for gaussians from 'this' lvl
+        mask = torch.logical_not(lvl == self.target_reso_lvl)
+        for param_group in self.optimizer.param_groups:
+            for param in param_group['params']:
+                # register hook
+                if len(param.shape) == 1:
+                    param.register_hook(lambda grad: grad * mask)
+                elif len(param.shape) == 2:
+                    param.register_hook(lambda grad: grad * mask[:, None])
+                elif len(param.shape) == 3:
+                    param.register_hook(lambda grad: grad * mask[:, None, None])
+
     def start_ms_lr(self):
         # turn of base color optimization, update dc delta only
         for param_group in self.optimizer.param_groups:
@@ -294,8 +307,10 @@ class GaussianModel:
 
         xyz = self._xyz.detach().cpu().numpy()
         normals = np.zeros_like(xyz)
-        f_dc = self._features_dc.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
-        f_rest = self._features_rest.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
+        # f_dc = self._features_dc.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
+        # f_rest = self._features_rest.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
+        f_dc = self._features_dc.detach().transpose(1, 2).flatten(start_dim=1).cpu().numpy()
+        f_rest = self._features_rest.detach().transpose(1, 2).flatten(start_dim=1).cpu().numpy()
         opacities = self._opacity.detach().cpu().numpy()
         occ_multiplier = self._occ_multiplier.flatten(start_dim=1).detach().cpu().numpy()
         dc_delta = self._dc_delta.flatten(start_dim=1).detach().cpu().numpy()
@@ -303,21 +318,27 @@ class GaussianModel:
         rotation = self._rotation.detach().cpu().numpy()
         base_gaussian_mask = self.base_gaussian_mask.detach().cpu().numpy()[:, None]
 
-        max_pixel_sizes = self.max_pixel_sizes[:, None].contiguous().detach().cpu().numpy()      # N x 1
-        min_pixel_sizes = self.min_pixel_sizes[:, None].contiguous().detach().cpu().numpy()      # N x 1
+        max_pixel_sizes = self.max_pixel_sizes[:, None].detach().cpu().numpy()      # N x 1
+        min_pixel_sizes = self.min_pixel_sizes[:, None].detach().cpu().numpy()      # N x 1
 
         dtype_full = [(attribute, 'bool') if attribute == 'base_gaussian_mask' else (attribute, 'f4')
                       for attribute in self.construct_list_of_attributes()]
 
-        elements = np.empty(xyz.shape[0], dtype=dtype_full)
+        # elements = np.empty(xyz.shape[0], dtype=dtype_full)
         attributes = np.concatenate((xyz, normals, f_dc, f_rest, opacities, occ_multiplier, dc_delta,
                                      scale, rotation, base_gaussian_mask, max_pixel_sizes, min_pixel_sizes), axis=1)
-        elements[:] = list(map(tuple, attributes))
+        attributes = [attr for attr in attributes.transpose()]
+        elements = np.core.records.fromarrays(attributes, dtype=dtype_full)
+        # elements[:] = list(map(tuple, attributes))
         el = PlyElement.describe(elements, 'vertex')
         PlyData([el]).write(path)
 
     def reset_opacity(self):
         opacities_new = inverse_sigmoid(torch.min(self.get_opacity, torch.ones_like(self.get_opacity)*0.01))
+        # reset only the first level
+        lvl_mask = self.target_reso_lvl == 0
+        opacities_new = torch.where(lvl_mask[:, None], opacities_new, self._opacity)
+
         optimizable_tensors = self.replace_tensor_to_optimizer(opacities_new, "opacity")
         self._opacity = optimizable_tensors["opacity"]
         # occ_multiplier_new = torch.min(self.get_occ_multiplier, torch.ones_like(self.get_occ_multiplier)*0.01)
@@ -630,30 +651,28 @@ class GaussianModel:
                                    reso_lvl=reso_lvl)
 
     def update_pixel_sizes(self, visibility_filter, pixel_sizes, reso_lvl, iteration):
-        # if reso_lvl == 0 and iteration >= 250:
-        if iteration >= 250:
-            mask = torch.logical_and(visibility_filter, self.target_reso_lvl == reso_lvl)
-            if reso_lvl > 0 and torch.any(self.target_reso_lvl == reso_lvl):
-                assert True
+        mask = torch.logical_and(visibility_filter, self.target_reso_lvl == reso_lvl)
+        if reso_lvl > 0 and torch.any(self.target_reso_lvl == reso_lvl):
+            assert True
 
-            # prevent the min/max pixel sizes is outdated
-            self.min_pixel_sizes[mask] = torch.clip(self.min_pixel_sizes[mask] * 1.1, -1)
-            self.max_pixel_sizes[mask] = self.max_pixel_sizes[mask] * 0.9
+        # prevent the min/max pixel sizes is outdated
+        self.min_pixel_sizes[mask] = torch.clip(self.min_pixel_sizes[mask] * 1.05, -1)
+        self.max_pixel_sizes[mask] = self.max_pixel_sizes[mask] * 0.95
 
-            self.max_pixel_sizes[mask] = torch.max(self.max_pixel_sizes[mask], pixel_sizes[mask])
+        self.max_pixel_sizes[mask] = torch.max(self.max_pixel_sizes[mask], pixel_sizes[mask])
 
-            self.min_pixel_sizes[mask] = torch.where(
-                self.min_pixel_sizes[mask] < 0,  # if not initialized
-                torch.where(
-                    pixel_sizes[mask] > 0,  # pixel size is valid
-                    pixel_sizes[mask],
-                    self.min_pixel_sizes[mask]
-                ),
-                torch.where(  # if initialized
-                    pixel_sizes[mask] > 0,  # pixel size is valid
-                    torch.min(self.min_pixel_sizes[mask], pixel_sizes[mask]),
-                    self.min_pixel_sizes[mask]
-                ))
+        self.min_pixel_sizes[mask] = torch.where(
+            self.min_pixel_sizes[mask] < 0,  # if not initialized
+            torch.where(
+                pixel_sizes[mask] > 0,  # pixel size is valid
+                pixel_sizes[mask],
+                self.min_pixel_sizes[mask]
+            ),
+            torch.where(  # if initialized
+                pixel_sizes[mask] > 0,  # pixel size is valid
+                torch.min(self.min_pixel_sizes[mask], pixel_sizes[mask]),
+                self.min_pixel_sizes[mask]
+            ))
 
     def prune_small_points(self):
         raise NotImplementedError("prune_small_points needs some adjustment after the large gaussian growth")
@@ -767,7 +786,8 @@ class GaussianModel:
         # aggregate into voxels
         N = len(self._xyz)      # total_number of points
         # voxel_reso = 0.02 * (1.5 ** reso_lvl)
-        voxel_reso = 0.02
+        voxel_reso = 0.02 * (reso_lvl / 4)
+        # voxel_reso = 0.02
         voxel_pooling = ml3d.layers.VoxelPooling(position_fn='center', feature_fn='average')
         # voxel_pooling = ml3d.layers.VoxelPooling(position_fn='center', feature_fn='nearest_neighbor')
         # voxel_pooling_max = ml3d.layers.VoxelPooling(position_fn='center', feature_fn='max')
