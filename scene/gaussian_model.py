@@ -659,23 +659,24 @@ class GaussianModel:
             assert True
 
         # prevent the min/max pixel sizes is outdated
-        self.min_pixel_sizes[mask] = torch.clip(self.min_pixel_sizes[mask] * 1.05, -1)
-        self.max_pixel_sizes[mask] = self.max_pixel_sizes[mask] * 0.95
+        if reso_lvl > 0:
+            self.max_pixel_sizes[mask] = self.max_pixel_sizes[mask] * 0.95
+            self.max_pixel_sizes[mask] = torch.max(self.max_pixel_sizes[mask], pixel_sizes[mask])
 
-        self.max_pixel_sizes[mask] = torch.max(self.max_pixel_sizes[mask], pixel_sizes[mask])
-
-        self.min_pixel_sizes[mask] = torch.where(
-            self.min_pixel_sizes[mask] < 0,  # if not initialized
-            torch.where(
-                pixel_sizes[mask] > 0,  # pixel size is valid
-                pixel_sizes[mask],
-                self.min_pixel_sizes[mask]
-            ),
-            torch.where(  # if initialized
-                pixel_sizes[mask] > 0,  # pixel size is valid
-                torch.min(self.min_pixel_sizes[mask], pixel_sizes[mask]),
-                self.min_pixel_sizes[mask]
-            ))
+        if reso_lvl < self.reso_lvls - 1:
+            self.min_pixel_sizes[mask] = torch.clip(self.min_pixel_sizes[mask] * 1.05, -1)
+            self.min_pixel_sizes[mask] = torch.where(
+                self.min_pixel_sizes[mask] < 0,  # if not initialized
+                torch.where(
+                    pixel_sizes[mask] > 0,  # pixel size is valid
+                    pixel_sizes[mask],
+                    self.min_pixel_sizes[mask]
+                ),
+                torch.where(  # if initialized
+                    pixel_sizes[mask] > 0,  # pixel size is valid
+                    torch.min(self.min_pixel_sizes[mask], pixel_sizes[mask]),
+                    self.min_pixel_sizes[mask]
+                ))
 
     def prune_small_points(self):
         raise NotImplementedError("prune_small_points needs some adjustment after the large gaussian growth")

@@ -163,8 +163,8 @@ def training(
                         reso_idx_list = [reso_idx_list[i] for i in range(len(reso_idx_list)) if reso_iterations_list[i] == min_reso_iterations]
                         reso_idx = choice(reso_idx_list)
 
-                        if reso_idx_mask.sum() > 0:
-                            print("choosing reso idx:", reso_idx_list, reso_idx)
+                        # if reso_idx_mask.sum() > 0:
+                        #     print("choosing reso idx:", reso_idx_list, reso_idx)
                     else:
                         reso_idx = randint(0, len(train_reso_scales)-1)
             else:
