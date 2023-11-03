@@ -19,7 +19,8 @@ from random import randint, random, choice
 
 from lpipsPyTorch import lpips
 from utils.loss_utils import l1_loss, ssim
-from gaussian_renderer import render, network_gui
+from gaussian_renderer import render
+from gaussian_renderer import network_gui
 import sys
 from scene import Scene, GaussianModel
 from utils.general_utils import safe_state
@@ -190,7 +191,8 @@ def training(
         Ll1 = l1_loss(image, gt_image)
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
         if ms_train:
-            loss_multiplier = 1 / (reso_idx * 2 + 1)
+            # loss_multiplier = 1 / (reso_idx * 2 + 1)
+            loss_multiplier = 1 if reso_idx == 0 else 0.1
             loss *= loss_multiplier
         loss.backward()
 
@@ -207,7 +209,7 @@ def training(
 
             # Log and save
             training_report(tb_writer, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end),
-                            testing_iterations, test_interval, scene, render, (pipe, background),
+                            testing_iterations, test_interval, opt.iterations, scene, render, (pipe, background),
                             filter_small, filter_large, fade_size)
             if (iteration in saving_iterations):
                 print("\n[ITER {}] Saving Gaussians".format(iteration))
@@ -422,7 +424,7 @@ def prepare_output_and_logger(args):
     return tb_writer
 
 def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed,
-                    testing_iterations, test_interval, scene : Scene, renderFunc, renderArgs,
+                    testing_iterations, test_interval, total_iterations, scene : Scene, renderFunc, renderArgs,
                     filter_small=False, filter_large=False, fade_size=0):
     if tb_writer:
         tb_writer.add_scalar('train_loss_patches/l1_loss', Ll1.item(), iteration)
@@ -431,6 +433,13 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed,
 
     # Report test and samples of training set
     if iteration in testing_iterations or (iteration > 0 and iteration % test_interval == 0):
+        if iteration == total_iterations:
+            eval_ssim = True
+            eval_lpips = True
+        else:
+            eval_ssim = False
+            eval_lpips = False
+
         torch.cuda.empty_cache()
         validation_configs = []
         for reso_scale in test_reso_scales:
@@ -485,11 +494,19 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed,
                                 gt_image[None], global_step=iteration)
                     l1_test += l1_loss(image, gt_image).mean().double()
                     psnr_test += psnr(image, gt_image).mean().double()
-                    ssim_test += ssim(image, gt_image).mean().double()
-                    lpips_test += lpips(image, gt_image).mean().double()
+                    if eval_ssim:
+                        ssim_test += ssim(image, gt_image).mean().double()
+                    if eval_lpips:
+                        try:
+                            lpips_test += lpips(image, gt_image).mean().double()
+                        except:
+                            pass
+                            # print(f"LPIPS failed at {image.shape}")
                 psnr_test /= len(config['cameras'])
-                ssim_test /= len(config['cameras'])
-                lpips_test /= len(config['cameras'])
+                if eval_ssim:
+                    ssim_test /= len(config['cameras'])
+                if eval_lpips:
+                    lpips_test /= len(config['cameras'])
                 l1_test /= len(config['cameras'])
                 render_time /= len(config['cameras'])
                 # print(f"\n[ITER {iteration}] Evaluating {config['name']} s{reso_scale:.1f}: L1 {l1_test} PSNR {psnr_test}")
@@ -497,8 +514,10 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed,
                 if tb_writer:
                     tb_writer.add_scalar(f"{config['name']}/s{reso_scale:.1f}_loss_viewpoint - l1_loss", l1_test, iteration)
                     tb_writer.add_scalar(f"{config['name']}/s{reso_scale:.1f}_loss_viewpoint - psnr", psnr_test, iteration)
-                    tb_writer.add_scalar(f"{config['name']}/s{reso_scale:.1f}_loss_viewpoint - ssim", ssim_test, iteration)
-                    tb_writer.add_scalar(f"{config['name']}/s{reso_scale:.1f}_loss_viewpoint - lpips", lpips_test, iteration)
+                    if eval_ssim:
+                        tb_writer.add_scalar(f"{config['name']}/s{reso_scale:.1f}_loss_viewpoint - ssim", ssim_test, iteration)
+                    if eval_lpips:
+                        tb_writer.add_scalar(f"{config['name']}/s{reso_scale:.1f}_loss_viewpoint - lpips", lpips_test, iteration)
                     tb_writer.add_scalar(f"{config['name']}/s{reso_scale:.1f}_loss_viewpoint - render_time", render_time, iteration)
         print(output_str)
 
