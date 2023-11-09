@@ -472,6 +472,9 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed,
                                             filter_small=filter_small, filter_large=filter_large, fade_size=fade_size)
                     image = torch.clamp(render_out["render"], 0.0, 1.0)
 
+                    torch.cuda.synchronize()
+                    render_time += time.time() - start_time
+
                     px = render_out["pixel_sizes"]
                     max_px = scene.gaussians.max_pixel_sizes
                     lvl = scene.gaussians.target_reso_lvl
@@ -479,9 +482,6 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed,
                     rel_px = (px / max_px)[valid_mask]
                     vis = render_out["visibility_filter"][valid_mask]
                     # print(torch.min(rel_px), torch.median(rel_px), torch.max(rel_px))
-
-                    torch.cuda.synchronize()
-                    render_time += time.time() - start_time
 
                     gt_image = torch.clamp(viewpoint.original_image.to("cuda"), 0.0, 1.0)
                     if tb_writer and (idx < 5):

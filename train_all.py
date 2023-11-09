@@ -9,6 +9,9 @@ from gaussian_renderer import render, network_gui
 
 from train import training
 
+mipnerf_scene_list = ["garden", "flowers", "treehill", "bicycle", "counter", "kitchen", "room", "stump", "bonsai"]
+tnt_scene_list = ["truck", "train"]
+
 if __name__ == "__main__":
     # Set up command line argument parser
     parser = ArgumentParser(description="Training script parameters")
@@ -33,66 +36,18 @@ if __name__ == "__main__":
     safe_state(args.quiet)
 
     scene_list = [
-        # "garden",
-        # "flowers", "treehill",
-        # "bicycle",
-        # "counter",
-        # "kitchen",
-        # "room",
+        "garden",
+        "flowers", "treehill",
+        "bicycle",
+        "counter",
+        "kitchen",
+        "room",
         "stump", "bonsai",
     ]
     method_dict = {
-        # 'ms': {         # our ms model
-        #     "ms_train": True,
-        #     "filter_small": True,
-        #     "prune_small": False,
-        #     "grow_large": False,
-        #     "multi_occ": False,
-        #     "multi_dc": False,
-        #     "preserve_large": False,
-        #     "insert_large": True,
-        #     "iterations": 40000,
-        #     "densify_until_iter": 15000,
-        # },
-        # "base": {
-        #     "ms_train": False,
-        #     "filter_small": False,
-        #     "prune_small": False,
-        #     "grow_large": False,
-        #     "multi_occ": False,
-        #     "multi_dc": False,
-        #     "preserve_large": False,
-        #     "insert_large": False,
-        #     "iterations": 30000,
-        #     "densify_until_iter": 15000,
-        # },
-        'abl_ms': {         # our ms model
-            "ms_train": True,
-            "filter_small": False,
-            "prune_small": False,
-            "grow_large": False,
-            "multi_occ": False,
-            "multi_dc": False,
-            "preserve_large": False,
-            "insert_large": False,
-            "iterations": 40000,
-            "densify_until_iter": 15000,
-        },
-        'abl_fs': {         # our ms model
+        'ms': {         # our ms model
             "ms_train": True,
             "filter_small": True,
-            "prune_small": False,
-            "grow_large": False,
-            "multi_occ": False,
-            "multi_dc": False,
-            "preserve_large": False,
-            "insert_large": False,
-            "iterations": 40000,
-            "densify_until_iter": 15000,
-        },
-        'abl_il': {         # our ms model
-            "ms_train": True,
-            "filter_small": False,
             "prune_small": False,
             "grow_large": False,
             "multi_occ": False,
@@ -102,6 +57,54 @@ if __name__ == "__main__":
             "iterations": 40000,
             "densify_until_iter": 15000,
         },
+        "base": {
+            "ms_train": False,
+            "filter_small": False,
+            "prune_small": False,
+            "grow_large": False,
+            "multi_occ": False,
+            "multi_dc": False,
+            "preserve_large": False,
+            "insert_large": False,
+            "iterations": 30000,
+            "densify_until_iter": 15000,
+        },
+        # 'abl_ms': {         # ablation for using ms train only
+        #     "ms_train": True,
+        #     "filter_small": False,
+        #     "prune_small": False,
+        #     "grow_large": False,
+        #     "multi_occ": False,
+        #     "multi_dc": False,
+        #     "preserve_large": False,
+        #     "insert_large": False,
+        #     "iterations": 40000,
+        #     "densify_until_iter": 15000,
+        # },
+        # 'abl_fs': {         # ablation for ms_train and filter small
+        #     "ms_train": True,
+        #     "filter_small": True,
+        #     "prune_small": False,
+        #     "grow_large": False,
+        #     "multi_occ": False,
+        #     "multi_dc": False,
+        #     "preserve_large": False,
+        #     "insert_large": False,
+        #     "iterations": 40000,
+        #     "densify_until_iter": 15000,
+        # },
+        # 'abl_il': {         # ablation for ms_train and insert large
+        #     "ms_train": True,
+        #     "filter_small": False,
+        #     "prune_small": False,
+        #     "grow_large": False,
+        #     "multi_occ": False,
+        #     "multi_dc": False,
+        #     "preserve_large": False,
+        #     "insert_large": True,
+        #     "iterations": 40000,
+        #     "densify_until_iter": 15000,
+        # },
     }
 
     source_dir = args.source_path
