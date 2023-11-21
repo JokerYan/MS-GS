@@ -11,6 +11,7 @@ from train import training
 
 mipnerf_scene_list = ["garden", "flowers", "treehill", "bicycle", "counter", "kitchen", "room", "stump", "bonsai"]
 tnt_scene_list = ["truck", "train"]
+db_scene_list = ["drjohnson", "playroom"]
 
 if __name__ == "__main__":
     # Set up command line argument parser
@@ -35,15 +36,6 @@ if __name__ == "__main__":
     # Initialize system state (RNG)
     safe_state(args.quiet)
 
-    scene_list = [
-        "garden",
-        "flowers", "treehill",
-        "bicycle",
-        "counter",
-        "kitchen",
-        "room",
-        "stump", "bonsai",
-    ]
     method_dict = {
         'ms': {         # our ms model
             "ms_train": True,
@@ -69,43 +61,56 @@ if __name__ == "__main__":
             "iterations": 30000,
             "densify_until_iter": 15000,
         },
-        # 'abl_ms': {         # ablation for using ms train only
-        #     "ms_train": True,
-        #     "filter_small": False,
-        #     "prune_small": False,
-        #     "grow_large": False,
-        #     "multi_occ": False,
-        #     "multi_dc": False,
-        #     "preserve_large": False,
-        #     "insert_large": False,
-        #     "iterations": 40000,
-        #     "densify_until_iter": 15000,
-        # },
-        # 'abl_fs': {         # ablation for ms_train and filter small
-        #     "ms_train": True,
-        #     "filter_small": True,
-        #     "prune_small": False,
-        #     "grow_large": False,
-        #     "multi_occ": False,
-        #     "multi_dc": False,
-        #     "preserve_large": False,
-        #     "insert_large": False,
-        #     "iterations": 40000,
-        #     "densify_until_iter": 15000,
-        # },
-        # 'abl_il': {         # ablation for ms_train and insert large
-        #     "ms_train": True,
-        #     "filter_small": False,
-        #     "prune_small": False,
-        #     "grow_large": False,
-        #     "multi_occ": False,
-        #     "multi_dc": False,
-        #     "preserve_large": False,
-        #     "insert_large": True,
-        #     "iterations": 40000,
-        #     "densify_until_iter": 15000,
-        # },
+
+        'abl_ms': {         # ablation for using ms train only
+            "ms_train": True,
+            "filter_small": False,
+            "prune_small": False,
+            "grow_large": False,
+            "multi_occ": False,
+            "multi_dc": False,
+            "preserve_large": False,
+            "insert_large": False,
+            "iterations": 40000,
+            "densify_until_iter": 15000,
+        },
+        'abl_fs': {         # ablation for ms_train and filter small
+            "ms_train": True,
+            "filter_small": True,
+            "prune_small": False,
+            "grow_large": False,
+            "multi_occ": False,
+            "multi_dc": False,
+            "preserve_large": False,
+            "insert_large": False,
+            "iterations": 40000,
+            "densify_until_iter": 15000,
+        },
+        'abl_il': {         # ablation for ms_train and insert large
+            "ms_train": True,
+            "filter_small": False,
+            "prune_small": False,
+            "grow_large": False,
+            "multi_occ": False,
+            "multi_dc": False,
+            "preserve_large": False,
+            "insert_large": True,
+            "iterations": 40000,
+            "densify_until_iter": 15000,
+        },
     }
+    scene_list = [
+        # "garden",
+        # "flowers", "treehill",
+        # "bicycle",
+        # "counter",
+        # "kitchen",
+        # "room",
+        # "stump", "bonsai",
+
+        "train", "truck",
+        "drjohnson", "playroom",
+    ]
 
     source_dir = args.source_path
     model_dir = args.model_path
@@ -129,13 +134,25 @@ if __name__ == "__main__":
             if args.iterations not in args.save_iterations:
                 args.save_iterations.append(args.iterations)
 
-            args.source_path = os.path.join(source_dir, scene)
+            if scene in mipnerf_scene_list:
+                dataset_dir = '360_v2'
+                max_scale = 7
+            elif scene in tnt_scene_list:
+                dataset_dir = 'tnt_gs'
+                max_scale = 6
+            elif scene in db_scene_list:
+                dataset_dir = 'deep_blender_gs'
+                max_scale = 6
+            else:
+                raise NotImplementedError
+            args.source_path = os.path.join(source_dir, dataset_dir, scene)
             args.model_path = os.path.join(model_dir, scene, method)
 
             torch.cuda.empty_cache()    # Free up memory before training, hopefully this will work
             training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.test_interval,
                      args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, args.debug_from,
-                     ms_train=args.ms_train, filter_small=args.filter_small, prune_small=args.prune_small,
+                     ms_train=args.ms_train, ms_train_max_scale=max_scale,
+                     filter_small=args.filter_small, prune_small=args.prune_small,
                      insert_large=args.insert_large,
                      preserve_large=args.preserve_large, multi_occ=args.multi_occ, multi_dc=args.multi_dc)
 

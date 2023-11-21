@@ -12,6 +12,7 @@ import copy
 import time
 
 import torch
+import numpy as np
 from scene import Scene
 import os
 from tqdm import tqdm
@@ -24,17 +25,18 @@ from arguments import ModelParams, PipelineParams, get_combined_args
 from gaussian_renderer import GaussianModel
 
 import cv2
+from scipy.spatial.transform import Rotation
 
-max_reso_pow = 7
+# max_reso_pow = 7
 # max_reso_pow = 5
-# max_reso_pow = 1
+max_reso_pow = 1
 train_reso_scales = [2**i for i in range(max_reso_pow + 1)]        # 1~128
 # test_reso_scales = train_reso_scales + [(2**i + 2**(i+1)) / 2 for i in range(max_reso_pow)]     # 1~128, include half scales
 test_reso_scales = train_reso_scales    # without half scales
 test_reso_scales = sorted(test_reso_scales)
 full_reso_scales = sorted(list(set(train_reso_scales + test_reso_scales)))
 
-def render_interactive(dataset: ModelParams, iteration: int, pipeline: PipelineParams, anti_alias=False):
+def render_trajectory(dataset: ModelParams, iteration: int, pipeline: PipelineParams, anti_alias=False):
     with torch.no_grad():
         gaussians = GaussianModel(dataset.sh_degree)
         scene = Scene(dataset, gaussians, load_iteration=iteration, shuffle=False, resolution_scales=full_reso_scales)
@@ -42,8 +44,8 @@ def render_interactive(dataset: ModelParams, iteration: int, pipeline: PipelineP
         bg_color = [1,1,1] if dataset.white_background else [0, 0, 0]
         background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
 
-        # prune gaussians far from center
-        gaussians.filter_center(scene.cameras_extent)
+        # # prune gaussians far from center
+        # gaussians.filter_center(scene.cameras_extent)
 
         # view = scene.getTestCameras()[0]
         view_idx = 0
@@ -58,8 +60,20 @@ def render_interactive(dataset: ModelParams, iteration: int, pipeline: PipelineP
         else:
             filter_small = False
             filter_large = False
-        while True:
+
+        trajectory = generate_circle_trajectory(scene)
+
+        for i, camera_pose in enumerate(trajectory):
+            R, T = camera_pose
+            view.R = R
+            view.T = T
+
             view.cal_transform()
+
+            rotation = Rotation.from_matrix(R)
+            euler = rotation.as_euler('xyz', degrees=True)
+            print(i, euler, view.T)
+
             torch.cuda.synchronize()
             time_start = time.time()
 
@@ -95,60 +109,85 @@ def render_interactive(dataset: ModelParams, iteration: int, pipeline: PipelineP
             cv2.imshow("depth", depth)
             cv2.imshow("rendering", rendering)
             cv2.setWindowTitle("rendering", f"{render_time * 1000:.2f}ms")
+            cv2.waitKey(0)
 
-            key = cv2.waitKey(0)
-            if key == ord('q'):
-                break
-            elif key == ord('4'):
-                view.T[0] += 0.1
-            elif key == ord('6'):
-                view.T[0] -= 0.1
-            elif key == ord('8'):
-                view.T[1] += 0.1
-            elif key == ord('2'):
-                view.T[1] -= 0.1
-            elif key == ord('7'):
-                view.T[2] += 0.5
-            elif key == ord('9'):
-                view.T[2] -= 0.5
-            elif key == ord('1'):
-                view.scale *= 0.9
-            elif key == ord('3'):
-                view.scale /= 0.9
-            elif key == ord('['):
-                gs_scale = max(0.1, gs_scale - 0.1)
-            elif key == ord(']'):
-                gs_scale = min(2.0, gs_scale + 0.1)
-            elif key == ord(';'):
-                fade_size = max(0.1, fade_size - 0.1)
-            elif key == ord('\''):
-                fade_size = min(2.0, fade_size + 0.1)
-            elif key == ord('x'):
-                view_idx = (view_idx - 1) % len(scene.getTestCameras())
-                view = copy.deepcopy(scene.getTestCameras(scale=test_reso_scales[reso_idx])[view_idx])
-            elif key == ord('c'):
-                view_idx = (view_idx + 1) % len(scene.getTestCameras())
-                view = copy.deepcopy(scene.getTestCameras(scale=test_reso_scales[reso_idx])[view_idx])
-            elif key == ord('z'):
-                view = copy.deepcopy(scene.getTestCameras(scale=test_reso_scales[reso_idx])[view_idx])
-                gs_scale = 1.0
-                fade_size = 1.0
-                reso_idx = 0
-            elif key == ord('/'):
-                reso_idx = min(reso_idx + 1, max_reso_pow)
-                view = copy.deepcopy(scene.getTestCameras(scale=test_reso_scales[reso_idx])[view_idx])
-            elif key == ord('.'):
-                reso_idx = max(reso_idx - 1, 0)
-                view = copy.deepcopy(scene.getTestCameras(scale=test_reso_scales[reso_idx])[view_idx])
-            elif key == ord('s'):
-                # save figure
-                output_dir = dataset.model_path
-                output_dir = os.path.join(output_dir, "viewer")
-                makedirs(output_dir, exist_ok=True)
-                image_name = f"{view_idx}_{reso_idx}.png"
-                image_path = os.path.join(output_dir, image_name)
-                cv2.imwrite(image_path, rendering * 255)
-                print(f"image saved to {image_path}")
+
+def generate_circle_trajectory(scene):
+    view_idx = 1
+    view = copy.deepcopy(scene.getTestCameras(scale=test_reso_scales[0])[view_idx])
+    reference_position = view.T.squeeze()
+
+    num_steps = 200
+    angle_step = 4 * np.pi / num_steps
+    trajectory = []
+    for step in range(num_steps):
+        angle = step * angle_step
+
+        # # Calculate the new position with rotation around the Y-axis
+        # rotation_y = np.array([
+        #     [np.cos(angle),  0, np.sin(angle)],
+        #     [0,              1, 0],
+        #     [-np.sin(angle), 0, np.cos(angle)]
+        # ])
+        # position_vector = rotation_y @ reference_position
+
+        radius = np.linalg.norm(reference_position)
+
+        dx = radius * np.cos(angle)
+        dz = radius * np.sin(angle)
+        dy = radius * 0.1 * np.cos(angle + np.pi) * 0
+        C = np.array([dx, dy, dz])
+
+        look_at = np.array([0, 1, 0])
+        rotation_matrix = pos_to_rotation(C, look_at)
+        # rotation_matrix = np.eye(3)
+
+        rotation_matrix = rotation_matrix.T
+        translation = - rotation_matrix @ C
+
+        trajectory.append((rotation_matrix, translation))
+    return trajectory
+
+
+# def pos_to_rotation(position_vector):
+#     # Z-axis (camera is pointing in the positive Z direction)
+#     # z_axis = -position_vector.copy()
+#     z_axis = position_vector.copy()
+#     z_axis /= np.linalg.norm(z_axis)  # Normalize
+#     # Y-axis (up direction)
+#     y_axis = np.array([0, 1, 0])
+#     # X-axis (right direction)
+#     x_axis = np.cross(y_axis, z_axis)
+#     x_axis /= np.linalg.norm(x_axis)
+#     # Recompute the Y-axis to ensure orthogonality
+#     y_axis = np.cross(z_axis, x_axis)
+#
+#     # Assemble the rotation matrix
+#     rotation_matrix = np.column_stack((x_axis, y_axis, z_axis))
+#
+#     # rotation_matrix = rotation_matrix.transpose()
+#
+#     return rotation_matrix
+
+def pos_to_rotation(position_vector, look_at):
+    # Z-axis (camera is pointing in the positive Z direction)
+    z_axis = -(position_vector - look_at).copy()
+    # z_axis = position_vector.copy()
+    z_axis /= np.linalg.norm(z_axis)  # Normalize
+    # Y-axis (up direction)
+    y_axis = np.array([0, -1, 0])
+    # X-axis (right direction)
+    x_axis = np.cross(z_axis, y_axis)
+    x_axis /= np.linalg.norm(x_axis)
+    # Recompute the Y-axis to ensure orthogonality
+    y_axis = np.cross(z_axis, x_axis)
+
+    # Assemble the rotation matrix
+    rotation_matrix = np.column_stack((x_axis, y_axis, z_axis))
+
+    # rotation_matrix = rotation_matrix.transpose()
+
+    return rotation_matrix
 
 if __name__ == "__main__":
     # Set up command line argument parser
@@ -165,4 +204,4 @@ if __name__ == "__main__":
     safe_state(args.quiet)
 
     # render_sets(model.extract(args), args.iteration, pipeline.extract(args), args.skip_train, args.skip_test)
-    render_interactive(model.extract(args), args.iteration, pipeline.extract(args), anti_alias=args.anti_alias)
+    render_trajectory(model.extract(args), args.iteration, pipeline.extract(args), anti_alias=args.anti_alias)

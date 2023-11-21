@@ -18,17 +18,22 @@ log_base_dir = '/home/zwyan/3d_cv/repos/gaussian-splatting/output'
 #     "room",
 #     "stump", "bonsai",
 # ]
-scene_name = 'bicycle'
+scene_name = 'bonsai'
 exp_name_list = [
-    'base',
+    # 'base',
     'ms',
-    # 'abl_ms',
-    # 'abl_fs',
-    # 'abl_il',
+    'abl_ms',
+    'abl_fs',
+    'abl_il',
 ]
 target_scale_list = [
     1, 4, 8, 16, 32, 64, 128
 ]
+display_time = False
+# width_ratio = 0.6    # percentage of width for cropping each image
+# width_ratio = 0.75    # percentage of width for cropping each image
+width_ratio = 1.0    # percentage of width for cropping each image
+rotate = False
 
 def add_text_to_image(img, text):
     """
@@ -41,9 +46,10 @@ def add_text_to_image(img, text):
     draw = ImageDraw.Draw(img)
 
     # Default settings
-    font_size = 15
-    right_margin = 10
-    bottom_margin = 10
+    width = img.width
+    font_size = int(width / 6)
+    right_margin = font_size // 3
+    bottom_margin = font_size // 3
     text_color = "white"
     font_path = "arial.ttf"  # Ensure this font is available or provide a full path
 
@@ -123,6 +129,9 @@ for exp_name in exp_name_list:
         img_stream = io.BytesIO(img_bytes)
         image = Image.open(img_stream)
 
+        if rotate:
+            image = image.rotate(90, expand=True)
+
         scale = extract_scale(tag)
         if scale not in target_scale_list:
             continue
@@ -155,7 +164,8 @@ for exp_name in exp_name_list:
 sample_image = next(iter(image_exp_name_scale_dict[exp_name_list[0]].values()))[1]      # get scale 1 image
 sample_image_reso = sample_image.size
 vis_size = (sample_image_reso[0] // 4, sample_image_reso[1] // 4)
-cr_vis_size = (vis_size[0] // 2, vis_size[1])       # crop size for vis
+cr_vis_size = (int(vis_size[0] * width_ratio), vis_size[1])       # crop size for vis
+border_vis_size = int(vis_size[0] * (1 - width_ratio) // 2)
 
 # choose and concat
 root = tk.Tk()
@@ -178,10 +188,10 @@ def update_image():
             image = image_exp_name_scale_dict[exp_name][image_name][scale]
             image = image.resize(vis_size, Image.NEAREST)
             # crop for 50% in the center
-            image = image.crop((vis_size[0] // 4, 0, vis_size[0] // 4 + cr_vis_size[0], cr_vis_size[1]))
+            image = image.crop((border_vis_size, 0, border_vis_size + cr_vis_size[0], cr_vis_size[1]))
 
             # get respective time
-            if exp_name != 'gt':
+            if exp_name != 'gt' and display_time:
                 time = time_exp_scale_dict[exp_name][scale]
                 time_str = f'{time * 1000:5.1f}ms'
             else:
@@ -236,7 +246,7 @@ root.bind('<Key>', key)
 root.mainloop()
 
 # save image
-output_name = f'{"_".join(exp_name_list)}.png'
+output_name = f'{"_".join(exp_name_list)}{"_t" if display_time else ""}_{int(width_ratio * 100)}.png'
 output_path = os.path.join(log_base_dir, scene_name, output_name)
 full_image.save(output_path)
 print(f'Save to {output_path}')

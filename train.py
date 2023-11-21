@@ -36,28 +36,29 @@ except ImportError:
     TENSORBOARD_FOUND = False
 
 
-max_reso_pow = 7
-# max_reso_pow = 5
-# max_reso_pow = 1
-train_reso_scales = [2**i for i in range(max_reso_pow + 1)]        # 1~128
-# test_reso_scales = train_reso_scales + [(2**i + 2**(i+1)) / 2 for i in range(max_reso_pow)]     # 1~128, include half scales
-test_reso_scales = train_reso_scales    # without half scales
-test_reso_scales = sorted(test_reso_scales)
-full_reso_scales = sorted(list(set(train_reso_scales + test_reso_scales)))
-print('train_reso_scales', train_reso_scales)
-print('test_reso_scales', test_reso_scales)
-print('full_reso_scales', full_reso_scales)
-
-ms_from_iter = 1
-# ms_from_iter = 5000
-# ms_from_iter = 15000
-
 def training(
         dataset, opt, pipe, testing_iterations, test_interval,
         saving_iterations, checkpoint_iterations, checkpoint, debug_from,
-        ms_train=False, filter_small=False, prune_small=False, preserve_large=False,
+        ms_train=False, ms_train_max_scale=7,
+        filter_small=False, prune_small=False, preserve_large=False,
         multi_occ=False, multi_dc=False, grow_large=False, insert_large=False
 ):
+    max_reso_pow = ms_train_max_scale
+    # max_reso_pow = 5
+    # max_reso_pow = 1
+    train_reso_scales = [2**i for i in range(max_reso_pow + 1)]        # 1~128
+    # test_reso_scales = train_reso_scales + [(2**i + 2**(i+1)) / 2 for i in range(max_reso_pow)]     # 1~128, include half scales
+    test_reso_scales = train_reso_scales    # without half scales
+    test_reso_scales = sorted(test_reso_scales)
+    full_reso_scales = sorted(list(set(train_reso_scales + test_reso_scales)))
+    print('train_reso_scales', train_reso_scales)
+    print('test_reso_scales', test_reso_scales)
+    print('full_reso_scales', full_reso_scales)
+
+    ms_from_iter = 1
+    # ms_from_iter = 5000
+    # ms_from_iter = 15000
+
     first_iter = 0
     last_reset_opacity_iter = None
     tb_writer = prepare_output_and_logger(dataset)
@@ -89,7 +90,7 @@ def training(
         inc_reso_at = torch.tensor([base_iter + 10, base_iter + 20, base_iter + 30])
         inc_reso_idx = torch.tensor([2, 4, 6])
         # inc_reso_idx_train = [[1, 2], [3, 4], [5, 6, 7]]
-        inc_reso_idx_train = [[2, 3], [4, 5], [6, 7]]
+        inc_reso_idx_train = [[2, 3], [4, 5], [6, 7] if max_reso_pow == 7 else [6]]
 
     viewpoint_stack = None
     ema_loss_for_log = 0.0
@@ -209,6 +210,7 @@ def training(
 
             # Log and save
             training_report(tb_writer, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end),
+                            train_reso_scales, test_reso_scales,
                             testing_iterations, test_interval, opt.iterations, scene, render, (pipe, background),
                             filter_small, filter_large, fade_size)
             if (iteration in saving_iterations):
@@ -423,7 +425,7 @@ def prepare_output_and_logger(args):
         print("Tensorboard not available: not logging progress")
     return tb_writer
 
-def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed,
+def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, train_reso_scales, test_reso_scales,
                     testing_iterations, test_interval, total_iterations, scene : Scene, renderFunc, renderArgs,
                     filter_small=False, filter_large=False, fade_size=0):
     if tb_writer:
@@ -547,6 +549,7 @@ if __name__ == "__main__":
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])
     parser.add_argument("--start_checkpoint", type=str, default = None)
     parser.add_argument('--ms_train', action='store_true', default=False, help='use multi-scale training')
+    parser.add_argument("--ms_train_max_scale", type=int, default=7)
     parser.add_argument('--filter_small', action='store_true', default=False, help='filter small gaussians based on pixel size')
     parser.add_argument('--prune_small', action='store_true', default=False, help='prune small gaussians based on pixel size')
     parser.add_argument('--preserve_large', action='store_true', default=False, help='preserve large gaussians')
@@ -567,7 +570,7 @@ if __name__ == "__main__":
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
     training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.test_interval,
              args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, args.debug_from,
-             ms_train=args.ms_train, filter_small=args.filter_small, prune_small=args.prune_small,
+             ms_train=args.ms_train, ms_train_max_scale=args.ms_train_max_scale, filter_small=args.filter_small, prune_small=args.prune_small,
              preserve_large=args.preserve_large, multi_occ=args.multi_occ, multi_dc=args.multi_dc,
              grow_large=args.grow_large, insert_large=args.insert_large)
 

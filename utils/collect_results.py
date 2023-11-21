@@ -7,13 +7,16 @@ from tensorboard.backend.event_processing import event_accumulator
 # Path to the TensorBoard log directory
 log_base_dir = '/home/zwyan/3d_cv/repos/gaussian-splatting/output'
 scene_name_list = [
-    "garden",
-    "flowers", "treehill",
-    "bicycle",
-    "counter",
-    "kitchen",
-    "room",
-    "stump", "bonsai",
+    # "garden",
+    # "flowers", "treehill",
+    # "bicycle",
+    # "counter",
+    # "kitchen",
+    # "room",
+    # "stump", "bonsai",
+
+    "train", "truck",
+    "drjohnson", "playroom",
 ]
 exp_name_list = [
     'base',

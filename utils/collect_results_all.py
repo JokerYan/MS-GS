@@ -6,15 +6,22 @@ from tensorboard.backend.event_processing import event_accumulator
 
 # Path to the TensorBoard log directory
 log_base_dir = '/home/zwyan/3d_cv/repos/gaussian-splatting/output'
-scene_name_list = [
-    "garden",
-    "flowers", "treehill",
-    "bicycle",
-    "counter",
-    "kitchen",
-    "room",
-    "stump", "bonsai",
-]
+
+mipnerf_scene_list = ["garden", "flowers", "treehill", "bicycle", "counter", "kitchen", "room", "stump", "bonsai"]
+tnt_scene_list = ["truck", "train"]
+db_scene_list = ["drjohnson", "playroom"]
+
+dataset_name = 'mipnerf'
+# dataset_name = 'tnt'
+# dataset_name = 'db'
+if dataset_name == 'mipnerf':
+    scene_name_list = mipnerf_scene_list
+elif dataset_name == 'tnt':
+    scene_name_list = tnt_scene_list
+elif dataset_name == 'db':
+    scene_name_list = db_scene_list
+else:
+    raise NotImplementedError
 exp_name_list = [
     'base',
     'ms',
@@ -30,7 +37,7 @@ exp_full_name_list = [
     "3DGS + Insert Large",
 ]
 exp_idx_list = [0, 2, 3, 4, 1]
-output_scale_list = [1, 4, 16, 64]
+output_scale_list = [1, 4, 16, 64, 128]
 output_data_type_list = ['psnr', 'lpips', 'time']
 
 def extract_scale(tag):
@@ -116,8 +123,34 @@ for row_idx, exp_idx in enumerate(exp_idx_list):
             row_data.append(data_str)
     output_rows.append([exp_full_name] + row_data)
 
+# bold the best result of all rows
+for col_idx in range(1, len(output_rows[-1])):
+    col_title = output_rows[1][col_idx]
+    larger = True if 'psnr' in col_title.lower() else False
+    best_row_idx = None
+    best_row_val = None
+    for row_idx in range(2, len(output_rows)):
+        val = output_rows[row_idx][col_idx]
+        if val == 'N.A.':
+            continue
+        else:
+            val = float(val)
+        if best_row_val is None:
+            best_row_idx = row_idx
+            best_row_val = val
+        elif larger:
+            if float(output_rows[row_idx][col_idx]) > best_row_val:
+                best_row_idx = row_idx
+                best_row_val = val
+        elif not larger:
+            if float(output_rows[row_idx][col_idx]) < best_row_val:
+                best_row_idx = row_idx
+                best_row_val = val
+    if best_row_idx is not None:
+        output_rows[best_row_idx][col_idx] = r'\textbf{' + output_rows[best_row_idx][col_idx] + r'}'
+
 # write csv
-output_path = os.path.join(log_base_dir, 'results_all.csv')
+output_path = os.path.join(log_base_dir, f'results_all_{dataset_name}.csv')
 with open(output_path, 'w') as f:
     writer = csv.writer(f)
     writer.writerows(output_rows)
