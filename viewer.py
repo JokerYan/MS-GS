@@ -34,20 +34,23 @@ test_reso_scales = train_reso_scales    # without half scales
 test_reso_scales = sorted(test_reso_scales)
 full_reso_scales = sorted(list(set(train_reso_scales + test_reso_scales)))
 
-def render_interactive(dataset: ModelParams, iteration: int, pipeline: PipelineParams, anti_alias=False):
+def render_interactive(dataset: ModelParams, iteration: int, pipeline: PipelineParams,
+                       anti_alias=False, render_once=False):
     with torch.no_grad():
         gaussians = GaussianModel(dataset.sh_degree)
         scene = Scene(dataset, gaussians, load_iteration=iteration, shuffle=False, resolution_scales=full_reso_scales)
+        gaussians.pre_cat_feature()
 
         bg_color = [1,1,1] if dataset.white_background else [0, 0, 0]
         background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
 
-        # prune gaussians far from center
-        gaussians.filter_center(scene.cameras_extent)
+        # # prune gaussians far from center
+        # gaussians.filter_center(scene.cameras_extent)
 
         # view = scene.getTestCameras()[0]
         view_idx = 0
         view = copy.deepcopy(scene.getTestCameras(scale=test_reso_scales[0])[view_idx])
+        # view = copy.deepcopy(scene.getTestCameras(scale=test_reso_scales[5])[view_idx])
         gs_scale = 1.0          # size of scale compared to the original size
         fade_size = 1.0
         reso_idx = 0
@@ -61,16 +64,20 @@ def render_interactive(dataset: ModelParams, iteration: int, pipeline: PipelineP
         while True:
             view.cal_transform()
             torch.cuda.synchronize()
-            time_start = time.time()
+            time_start = time.perf_counter()
 
-            results = render(view, gaussians, pipeline, background, scaling_modifier=gs_scale,
-                             filter_small=filter_small, filter_large=filter_large, fade_size=fade_size)
-            rendering = results["render"]
-            acc_pixel_size = results["acc_pixel_size"]
-            depth = results["depth"]
+            for _ in range(1):
+                results = render(view, gaussians, pipeline, background, scaling_modifier=gs_scale,
+                                 filter_small=filter_small, filter_large=filter_large, fade_size=fade_size)
+                rendering = results["render"]
+                acc_pixel_size = results["acc_pixel_size"]
+                depth = results["depth"]
+
+            if render_once:
+                break
 
             torch.cuda.synchronize()
-            render_time = time.time() - time_start
+            render_time = time.perf_counter() - time_start
 
             rendering = torch.permute(rendering, (1, 2, 0))    # HWC
             rendering = rendering.cpu().numpy()
@@ -158,6 +165,7 @@ if __name__ == "__main__":
     parser.add_argument("--iteration", default=-1, type=int)
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--anti_alias", action="store_true", default=False)
+    parser.add_argument("--render_once", action="store_true", default=False)
     args = get_combined_args(parser)
     print("Rendering " + args.model_path)
 
@@ -165,4 +173,5 @@ if __name__ == "__main__":
     safe_state(args.quiet)
 
     # render_sets(model.extract(args), args.iteration, pipeline.extract(args), args.skip_train, args.skip_test)
-    render_interactive(model.extract(args), args.iteration, pipeline.extract(args), anti_alias=args.anti_alias)
+    render_interactive(model.extract(args), args.iteration, pipeline.extract(args),
+                       anti_alias=args.anti_alias, render_once=args.render_once)

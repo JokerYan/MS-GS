@@ -9,6 +9,7 @@ from tensorboard.backend.event_processing import event_accumulator
 
 # Path to the TensorBoard log directory
 log_base_dir = '/home/zwyan/3d_cv/repos/gaussian-splatting/output'
+output_root = '/home/zwyan/3d_cv/papers/my papers/anti-aliasing/qualitatives'
 # scene_name_list = [
 #     "garden",
 #     "flowers", "treehill",
@@ -18,24 +19,39 @@ log_base_dir = '/home/zwyan/3d_cv/repos/gaussian-splatting/output'
 #     "room",
 #     "stump", "bonsai",
 # ]
-scene_name = 'bonsai'
+scene_name = 'counter'
+# exp_name_list = [
+#     'base',
+#     'ms',
+# ]
 exp_name_list = [
-    # 'base',
-    'ms',
+    'base',
     'abl_ms',
     'abl_fs',
     'abl_il',
+    'ms'
 ]
+exp_full_name_dict = {
+    'gt': 'Ground Truth',
+    'base': '3DGS',
+    'abl_ms': '3DGS+MS Train',
+    'abl_fs': '3DGS+Filter Small',
+    'abl_il': '3DGS+Insert Large',
+    'ms': 'Full Method',
+}
 target_scale_list = [
     1, 4, 8, 16, 32, 64, 128
 ]
 display_time = False
 # width_ratio = 0.6    # percentage of width for cropping each image
 # width_ratio = 0.75    # percentage of width for cropping each image
-width_ratio = 1.0    # percentage of width for cropping each image
-rotate = False
+# width_ratio = 1.0    # percentage of width for cropping each image
+width_ratio = 0.75 if scene_name == 'drjohnson' else 0.6
 
-def add_text_to_image(img, text):
+rotate = False
+is_ablation = len(exp_name_list) > 2
+
+def add_text_to_image(img, text, bottom=True, shadow=False):
     """
     Add text to the bottom right corner of an image object.
 
@@ -47,9 +63,8 @@ def add_text_to_image(img, text):
 
     # Default settings
     width = img.width
-    font_size = int(width / 6)
-    right_margin = font_size // 3
-    bottom_margin = font_size // 3
+    height = img.height
+    font_size = int(height / 6)
     text_color = "white"
     font_path = "arial.ttf"  # Ensure this font is available or provide a full path
 
@@ -59,12 +74,24 @@ def add_text_to_image(img, text):
         print("Font file not found. Using default font.")
         font = ImageFont.load_default()
 
-    # Calculate the text size and position
-    text_size = draw.textbbox((0, 0), text, font=font)[2:]
-    text_x = img.width - text_size[0] - right_margin
-    text_y = img.height - text_size[1] - bottom_margin
+    if bottom:
+        right_margin = font_size // 3
+        bottom_margin = font_size // 3
+
+        # Calculate the text size and position
+        text_size = draw.textbbox((0, 0), text, font=font)[2:]
+        text_x = img.width - text_size[0] - right_margin
+        text_y = img.height - text_size[1] - bottom_margin
+    else:
+        left_margin = font_size // 3
+        top_margin = font_size // 3
+        text_x = left_margin
+        text_y = top_margin
 
     # Draw the text
+    if shadow:
+        shadow_offset = 1
+        draw.text((text_x + shadow_offset, text_y + shadow_offset), text, font=font, fill=(200, 200, 200))
     draw.text((text_x, text_y), text, font=font, fill=text_color)
 
     return img
@@ -206,6 +233,11 @@ def update_image():
         exp_image = Image.new('RGB', (total_width, cr_vis_size[1]), (255, 255, 255))
         for i, image in enumerate(exp_image_list):
             exp_image.paste(image, (i * (cr_vis_size[0] + gap_width), 0))
+
+        # add exp name
+        if is_ablation:
+            exp_image = add_text_to_image(exp_image, exp_full_name_dict[exp_name], bottom=False, shadow=True)
+
         image_list.append(exp_image)
      # concat vertically
     gap_height = 10
@@ -246,7 +278,11 @@ root.bind('<Key>', key)
 root.mainloop()
 
 # save image
-output_name = f'{"_".join(exp_name_list)}{"_t" if display_time else ""}_{int(width_ratio * 100)}.png'
-output_path = os.path.join(log_base_dir, scene_name, output_name)
+if is_ablation:
+    output_dir = os.path.join(output_root, 'ablation')
+else:
+    output_dir = output_root
+output_name = f'{scene_name}_{"_".join(exp_name_list)}{"_t" if display_time else ""}_{int(width_ratio * 100)}.png'
+output_path = os.path.join(output_dir, output_name)
 full_image.save(output_path)
 print(f'Save to {output_path}')

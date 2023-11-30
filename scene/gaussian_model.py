@@ -74,6 +74,7 @@ class GaussianModel:
         self.multi_occ = multi_occ
         self.multi_dc = multi_dc
         self.reso_lvls = reso_lvls                  # L
+        self.cat_feature = None
 
     def capture(self):
         return (
@@ -134,9 +135,15 @@ class GaussianModel:
     @property
     def get_xyz(self):
         return self._xyz
+
+    def pre_cat_feature(self):
+        # used only in rendering but not training
+        self.cat_feature = torch.cat((self._features_dc, self._features_rest), dim=1)
     
     @property
     def get_features(self):
+        if self.cat_feature is not None:
+            return self.cat_feature
         features_dc = self._features_dc
         features_rest = self._features_rest
         return torch.cat((features_dc, features_rest), dim=1)
@@ -840,11 +847,15 @@ class GaussianModel:
                                    )
         print(f"Inserted {len(voxel_xyz)} large gaussians at reso {2**reso_lvl}")
 
-    def filter_center(self, max_dist, train=False):
+    def filter_center(self, max_dist, train=False, min_y=None):
         # filter the gassians to leave only the gaussians that are close to the center
         # this is only for the purpose of visualization
         dist = torch.norm(self.get_xyz, dim=-1)
         mask = dist < max_dist
+
+        # y axis pointing downwards, min_y used to filter sky
+        if min_y is not None:
+            mask = torch.logical_and(mask, self.get_xyz[:, 1] > min_y)
 
         self._xyz = self._xyz[mask]
         self._features_dc = self._features_dc[mask]

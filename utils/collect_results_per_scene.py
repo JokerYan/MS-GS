@@ -25,21 +25,15 @@ else:
 exp_name_list = [
     'base',
     'ms',
-    'abl_ms',
-    'abl_fs',
-    'abl_il',
 ]
 exp_full_name_list = [
-    "3D Gaussian\cite{kerbl3Dgaussians}",
-    "Our Method",
-    "3DGS + MS Train",
-    "3DGS + Filter Small",
-    "3DGS + Insert Large",
+    "3D-GS\cite{kerbl3Dgaussians}",
+    "Ours",
 ]
-exp_idx_list = [0, 2, 3, 4, 1]
-# output_scale_list = [1, 4, 16, 64, 128]
+exp_idx_list = [0, 1]
+output_scale_list = [1, 4, 16, 64, 128] if dataset_name == 'mipnerf' else [1, 4, 16, 64]
 # output_scale_list = [1, 2, 4, 8]
-output_scale_list = [16, 32, 64, 128] if dataset_name == 'mipnerf' else [16, 32, 64]
+# output_scale_list = [16, 32, 64, 128] if dataset_name == 'mipnerf' else [16, 32, 64]
 output_data_type_list = ['psnr', 'lpips', 'time']
 
 def extract_scale(tag):
@@ -81,12 +75,12 @@ for scene_name in scene_name_list:
 
 # aggregate and calculate mean across scenes
 output_rows = []
-output_rows.append(['Scale'])
+output_rows.append(['', 'Scale'])
 for scale in output_scale_list:
     output_rows[-1].append(f'{scale}x')
     for _ in range(len(output_data_type_list) - 1):
         output_rows[-1] .append('')
-output_rows.append(['Metric'])
+output_rows.append(['Scene', 'Metric'])
 for scale in output_scale_list:
     for data_type in output_data_type_list:
         if data_type == 'psnr':
@@ -99,63 +93,66 @@ for scale in output_scale_list:
             raise NotImplementedError
         output_rows[-1].append(r'\small{' + title_str + r'}')
 
-for row_idx, exp_idx in enumerate(exp_idx_list):
-    exp_name = exp_name_list[exp_idx]
-    exp_full_name = exp_full_name_list[exp_idx]
-    row_data = []
-    for scale in output_scale_list:
-        for data_type in output_data_type_list:
-            data_list = []
-            for scene_name in scene_name_list:
+for scene_name in scene_name_list:
+    for exp_idx in exp_idx_list:
+        exp_name = exp_name_list[exp_idx]
+        exp_full_name = exp_full_name_list[exp_idx]
+        row_data = [scene_name, exp_full_name]
+        for scale in output_scale_list:
+            for data_type in output_data_type_list:
                 data = data_dict[(scene_name, exp_name, scale, data_type)]
-                data_list.append(float(data))
-            data_mean = sum(data_list) / len(data_list)
-            if data_type == 'psnr':
-                data_str = f'{data_mean:.2f}'
-            elif data_type == 'lpips':
-                if data_mean == 0:
-                    data_str = 'N.A.'
+                data = float(data)
+                if data_type == 'psnr':
+                    data_str = f'{data:.2f}'
+                elif data_type == 'lpips':
+                    if data == 0:
+                        data_str = 'N.A.'
+                    else:
+                        data_str = f'{data:.3f}'
+                elif data_type == 'time':
+                    data_str = f'{data * 1000:.1f}'
                 else:
-                    data_str = f'{data_mean:.3f}'
-            elif data_type == 'time':
-                data_str = f'{data_mean * 1000:.1f}'
-            else:
-                raise NotImplementedError
-            # row_data.append(f'{data_type}_{scale}:{data_str}')
-            row_data.append(data_str)
-    output_rows.append([exp_full_name] + row_data)
+                    raise NotImplementedError
+                # row_data.append(f'{data_type}_{scale}:{data_str}')
+                row_data.append(data_str)
+        output_rows.append(row_data)
 
 # bold the best result of all rows
-for col_idx in range(1, len(output_rows[-1])):
+for col_idx in range(2, len(output_rows[-1])):
     col_title = output_rows[1][col_idx]
     larger = True if 'psnr' in col_title.lower() else False
-    best_row_idx = None
-    best_row_val = None
-    for row_idx in range(2, len(output_rows)):
-        val = output_rows[row_idx][col_idx]
-        if val == 'N.A.':
-            continue
-        else:
-            val = float(val)
-        if best_row_val is None:
-            best_row_idx = row_idx
-            best_row_val = val
-        elif larger:
-            if float(output_rows[row_idx][col_idx]) > best_row_val:
+    for scene_name in scene_name_list:
+        best_row_idx = None
+        best_row_val = None
+        for exp_idx in exp_idx_list:
+            row_idx = 2 + exp_idx + scene_name_list.index(scene_name) * len(exp_idx_list)
+            val = output_rows[row_idx][col_idx]
+            if val == 'N.A.':
+                continue
+            else:
+                val = float(val)
+            if best_row_val is None:
                 best_row_idx = row_idx
                 best_row_val = val
-        elif not larger:
-            if float(output_rows[row_idx][col_idx]) < best_row_val:
-                best_row_idx = row_idx
-                best_row_val = val
-    if best_row_idx is not None:
-        output_rows[best_row_idx][col_idx] = r'\textbf{' + output_rows[best_row_idx][col_idx] + r'}'
+            elif larger:
+                if float(output_rows[row_idx][col_idx]) > best_row_val:
+                    best_row_idx = row_idx
+                    best_row_val = val
+            elif not larger:
+                if float(output_rows[row_idx][col_idx]) < best_row_val:
+                    best_row_idx = row_idx
+                    best_row_val = val
+        if best_row_idx is not None:
+            output_rows[best_row_idx][col_idx] = r'\textbf{' + output_rows[best_row_idx][col_idx] + r'}'
 
 # write csv
 # output_path = os.path.join(log_base_dir, f'results_all_{dataset_name}.csv')
 scale_str = ','.join([str(scale) for scale in output_scale_list])
-output_path = os.path.join(log_base_dir, f'results_all_{dataset_name}_{scale_str}.csv')
+output_path = os.path.join(log_base_dir, f'results_all_{dataset_name}_per_scene.csv')
+# with open(output_path, 'w') as f:
+#     writer = csv.writer(f, delimiter='&', lineterminator='\\\\\n', quoting=csv.QUOTE_NONE, escapechar='')
+#     writer.writerows(output_rows)
 with open(output_path, 'w') as f:
-    writer = csv.writer(f)
-    writer.writerows(output_rows)
+    for row in output_rows:
+        f.write('&'.join([str(x) for x in row]) + '\\\\\n')
 print(f'csv saved to {output_path}')
