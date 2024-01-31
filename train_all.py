@@ -37,7 +37,70 @@ if __name__ == "__main__":
     safe_state(args.quiet)
 
     method_dict = {
-        'ms': {         # our ms model
+        # 'ms': {         # our ms model
+        #     "ms_train": True,
+        #     "filter_small": True,
+        #     "prune_small": False,
+        #     "grow_large": False,
+        #     "multi_occ": False,
+        #     "multi_dc": False,
+        #     "preserve_large": False,
+        #     "insert_large": True,
+        #     "iterations": 40000,
+        #     "densify_until_iter": 15000,
+        # },
+        # "base": {
+        #     "ms_train": False,
+        #     "filter_small": False,
+        #     "prune_small": False,
+        #     "grow_large": False,
+        #     "multi_occ": False,
+        #     "multi_dc": False,
+        #     "preserve_large": False,
+        #     "insert_large": False,
+        #     "iterations": 30000,
+        #     "densify_until_iter": 15000,
+        # },
+        #
+        # 'abl_ms': {         # ablation for using ms train only
+        #     "ms_train": True,
+        #     "filter_small": False,
+        #     "prune_small": False,
+        #     "grow_large": False,
+        #     "multi_occ": False,
+        #     "multi_dc": False,
+        #     "preserve_large": False,
+        #     "insert_large": False,
+        #     "iterations": 40000,
+        #     "densify_until_iter": 15000,
+        # },
+        # 'abl_fs': {         # ablation for ms_train and filter small
+        #     "ms_train": True,
+        #     "filter_small": True,
+        #     "prune_small": False,
+        #     "grow_large": False,
+        #     "multi_occ": False,
+        #     "multi_dc": False,
+        #     "preserve_large": False,
+        #     "insert_large": False,
+        #     "iterations": 40000,
+        #     "densify_until_iter": 15000,
+        # },
+        # 'abl_il': {         # ablation for ms_train and insert large
+        #     "ms_train": True,
+        #     "filter_small": False,
+        #     "prune_small": False,
+        #     "grow_large": False,
+        #     "multi_occ": False,
+        #     "multi_dc": False,
+        #     "preserve_large": False,
+        #     "insert_large": True,
+        #     "iterations": 40000,
+        #     "densify_until_iter": 15000,
+        # },
+
+        # interp scales
+        'ms_interp_scale': {  # use our model, but extends to higher untrained scales
             "ms_train": True,
             "filter_small": True,
             "prune_small": False,
@@ -48,8 +111,9 @@ if __name__ == "__main__":
             "insert_large": True,
             "iterations": 40000,
             "densify_until_iter": 15000,
+            "ms_test_scales": [1, 3, 6, 12, 24, 48, 96],
         },
-        "base": {
+        'base_interp_scale': {  # use base model, but extends to higher untrained scales
             "ms_train": False,
             "filter_small": False,
             "prune_small": False,
@@ -60,9 +124,9 @@ if __name__ == "__main__":
             "insert_large": False,
             "iterations": 30000,
             "densify_until_iter": 15000,
+            "ms_test_scales": [1, 3, 6, 12, 24, 48, 96],
         },
-
-        'abl_ms': {         # ablation for using ms train only
+        'ms_only_interp_scale': {  # use ms only model, but extends to higher untrained scales
             "ms_train": True,
             "filter_small": False,
             "prune_small": False,
@@ -73,22 +137,12 @@ if __name__ == "__main__":
             "insert_large": False,
             "iterations": 40000,
             "densify_until_iter": 15000,
+            "ms_test_scales": [1, 3, 6, 12, 24, 48, 96],
         },
-        'abl_fs': {         # ablation for ms_train and filter small
+        # extend scales
+        'ms_extend_scale': {    # use our model, but extends to higher untrained scales
             "ms_train": True,
             "filter_small": True,
-            "prune_small": False,
-            "grow_large": False,
-            "multi_occ": False,
-            "multi_dc": False,
-            "preserve_large": False,
-            "insert_large": False,
-            "iterations": 40000,
-            "densify_until_iter": 15000,
-        },
-        'abl_il': {         # ablation for ms_train and insert large
-            "ms_train": True,
-            "filter_small": False,
             "prune_small": False,
             "grow_large": False,
             "multi_occ": False,
@@ -97,6 +151,36 @@ if __name__ == "__main__":
             "insert_large": True,
             "iterations": 40000,
             "densify_until_iter": 15000,
+            "max_scale": 5,     # train up to 2^5=32
+            "ms_test_scales": [1, 16, 32, 64, 128],
+        },
+        'base_extend_scale': {    # use base model, but extends to higher untrained scales
+            "ms_train": False,
+            "filter_small": False,
+            "prune_small": False,
+            "grow_large": False,
+            "multi_occ": False,
+            "multi_dc": False,
+            "preserve_large": False,
+            "insert_large": False,
+            "iterations": 30000,
+            "densify_until_iter": 15000,
+            # "max_scale": 5,     # train up to 2^5=32
+            "ms_test_scales": [1, 16, 32, 64, 128],
+        },
+        'ms_only_extend_scale': {   # use ms only model, but extends to higher untrained scales
+            "ms_train": True,
+            "filter_small": False,
+            "prune_small": False,
+            "grow_large": False,
+            "multi_occ": False,
+            "multi_dc": False,
+            "preserve_large": False,
+            "insert_large": False,
+            "iterations": 40000,
+            "densify_until_iter": 15000,
+            "max_scale": 5,     # train up to 2^5=32
+            "ms_test_scales": [1, 16, 32, 64, 128],
         },
     }
     scene_list = [
@@ -105,11 +189,11 @@ if __name__ == "__main__":
         # "bicycle",
         # "counter",
         # "kitchen",
-        # "room",
-        # "stump", "bonsai",
+        "room",
+        "stump", "bonsai",
 
-        "train", "truck",
-        "drjohnson", "playroom",
+        # "train", "truck",
+        # "drjohnson", "playroom",
     ]
 
     source_dir = args.source_path
@@ -145,6 +229,13 @@ if __name__ == "__main__":
                 max_scale = 6
             else:
                 raise NotImplementedError
+            if 'max_scale' in method_dict[method]:
+                max_scale = method_dict[method]['max_scale']
+            if 'ms_test_scales' in method_dict[method]:
+                ms_test_scales = method_dict[method]['ms_test_scales']
+            else:
+                ms_test_scales = None
+
             args.source_path = os.path.join(source_dir, dataset_dir, scene)
             args.model_path = os.path.join(model_dir, scene, method)
 
@@ -154,7 +245,9 @@ if __name__ == "__main__":
                      ms_train=args.ms_train, ms_train_max_scale=max_scale,
                      filter_small=args.filter_small, prune_small=args.prune_small,
                      insert_large=args.insert_large,
-                     preserve_large=args.preserve_large, multi_occ=args.multi_occ, multi_dc=args.multi_dc)
+                     preserve_large=args.preserve_large, multi_occ=args.multi_occ, multi_dc=args.multi_dc,
+                     ms_test_scales=ms_test_scales,
+                     )
 
     # source_path
     # model_path

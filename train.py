@@ -41,7 +41,8 @@ def training(
         saving_iterations, checkpoint_iterations, checkpoint, debug_from,
         ms_train=False, ms_train_max_scale=7,
         filter_small=False, prune_small=False, preserve_large=False,
-        multi_occ=False, multi_dc=False, grow_large=False, insert_large=False
+        multi_occ=False, multi_dc=False, grow_large=False, insert_large=False,
+        ms_test_scales=None
 ):
     max_reso_pow = ms_train_max_scale
     # max_reso_pow = 5
@@ -49,7 +50,10 @@ def training(
     train_reso_scales = [2**i for i in range(max_reso_pow + 1)]        # 1~128
     # test_reso_scales = train_reso_scales + [(2**i + 2**(i+1)) / 2 for i in range(max_reso_pow)]     # 1~128, include half scales
     test_reso_scales = train_reso_scales    # without half scales
-    test_reso_scales = sorted(test_reso_scales)
+    if ms_test_scales is not None:
+        test_reso_scales = ms_test_scales
+    else:
+        test_reso_scales = sorted(test_reso_scales)
     full_reso_scales = sorted(list(set(train_reso_scales + test_reso_scales)))
     print('train_reso_scales', train_reso_scales)
     print('test_reso_scales', test_reso_scales)
@@ -87,10 +91,24 @@ def training(
         # inc_reso_at = torch.tensor([5000 - 20, 5000 - 30, 5000 - 10])
         base_iter = 1000
         # inc_reso_at = torch.tensor([base_iter - 30, base_iter - 20, base_iter - 10])
-        inc_reso_at = torch.tensor([base_iter + 10, base_iter + 20, base_iter + 30])
-        inc_reso_idx = torch.tensor([2, 4, 6])
         # inc_reso_idx_train = [[1, 2], [3, 4], [5, 6, 7]]
-        inc_reso_idx_train = [[2, 3], [4, 5], [6, 7] if max_reso_pow == 7 else [6]]
+        # inc_reso_idx_train = [[2, 3],
+        #                       [4, 5],
+        #                       [6, 7] if max_reso_pow == 7 else [6]]
+        if max_reso_pow == 5:
+            inc_reso_idx_train = [[2, 3], [4], [5]]
+            inc_reso_idx = torch.tensor([2, 4])
+            inc_reso_at = torch.tensor([base_iter + 10, base_iter + 20])
+        elif max_reso_pow == 6:
+            inc_reso_idx_train = [[2, 3], [4, 5], [6]]
+            inc_reso_idx = torch.tensor([2, 4, 6])
+            inc_reso_at = torch.tensor([base_iter + 10, base_iter + 20, base_iter + 30])
+        elif max_reso_pow == 7:
+            inc_reso_idx_train = [[2, 3], [4, 5], [6, 7]]
+            inc_reso_idx = torch.tensor([2, 4, 6])
+            inc_reso_at = torch.tensor([base_iter + 10, base_iter + 20, base_iter + 30])
+        else:
+            raise NotImplementedError
 
     viewpoint_stack = None
     ema_loss_for_log = 0.0

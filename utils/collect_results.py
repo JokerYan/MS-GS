@@ -7,24 +7,30 @@ from tensorboard.backend.event_processing import event_accumulator
 # Path to the TensorBoard log directory
 log_base_dir = '/home/zwyan/3d_cv/repos/gaussian-splatting/output'
 scene_name_list = [
-    # "garden",
-    # "flowers", "treehill",
-    # "bicycle",
-    # "counter",
-    # "kitchen",
-    # "room",
-    # "stump", "bonsai",
+    "garden",
+    "flowers", "treehill",
+    "bicycle",
+    "counter",
+    "kitchen",
+    "room",
+    "stump", "bonsai",
 
-    "train", "truck",
-    "drjohnson", "playroom",
+    # "train", "truck",
+    # "drjohnson", "playroom",
 ]
 exp_name_list = [
-    'base',
-    'ms',
-    'abl_ms',
-    'abl_fs',
-    'abl_il',
+    # 'base',
+    # 'ms',
+    # 'abl_ms',
+    # 'abl_fs',
+    # 'abl_il',
+
+    "base_interp_scale",
+    "ms_only_interp_scale",
+    "ms_interp_scale",
 ]
+# result_file_name = 'results.csv'
+result_file_name = 'results_interp_scale.csv'
 
 for scene_name in scene_name_list:
     print('Scene:', scene_name)
@@ -97,7 +103,7 @@ for scene_name in scene_name_list:
         for data in data_dict.values():
             csv_row.append(data)
         csv_data.append(csv_row)
-    output_path = os.path.join(log_base_dir, scene_name, 'results.csv')
+    output_path = os.path.join(log_base_dir, scene_name, result_file_name)
     with open(output_path, 'w') as f:
         writer = csv.writer(f)
         writer.writerows(csv_data)

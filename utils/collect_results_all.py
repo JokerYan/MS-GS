@@ -11,9 +11,9 @@ mipnerf_scene_list = ["garden", "flowers", "treehill", "bicycle", "counter", "ki
 tnt_scene_list = ["truck", "train"]
 db_scene_list = ["drjohnson", "playroom"]
 
-# dataset_name = 'mipnerf'
+dataset_name = 'mipnerf'
 # dataset_name = 'tnt'
-dataset_name = 'db'
+# dataset_name = 'db'
 if dataset_name == 'mipnerf':
     scene_name_list = mipnerf_scene_list
 elif dataset_name == 'tnt':
@@ -22,25 +22,37 @@ elif dataset_name == 'db':
     scene_name_list = db_scene_list
 else:
     raise NotImplementedError
+
+short = True
 exp_name_list = [
-    'base',
-    'ms',
-    'abl_ms',
-    'abl_fs',
-    'abl_il',
+    # 'base',
+    # 'ms',
+    # 'abl_ms',
+    # 'abl_fs',
+    # 'abl_il',
+    "base_interp_scale",
+    "ms_only_interp_scale",
+    "ms_interp_scale",
 ]
 exp_full_name_list = [
-    "3D Gaussian\cite{kerbl3Dgaussians}",
-    "Our Method",
-    "3DGS + MS Train",
-    "3DGS + Filter Small",
-    "3DGS + Insert Large",
+    # "3D Gaussian\cite{kerbl3Dgaussians}",
+    # "Our Method",
+    # "3DGS + MS Train",
+    # "3DGS + Filter Small",
+    # "3DGS + Insert Large",
+    "3D Gaussian\cite{kerbl3Dgaussians}" if not short else '3DGS[12]',
+    "3DGS + MS Train" if not short else '3DGS+MS',
+    "Our Method" if not short else 'Ours',
 ]
-exp_idx_list = [0, 2, 3, 4, 1]
+# result_file_name = 'results.csv'
+result_file_name = 'results_interp_scale.csv'
+# exp_idx_list = [0, 2, 3, 4, 1]
+exp_idx_list = [0, 1, 2]
 # output_scale_list = [1, 4, 16, 64, 128]
 # output_scale_list = [1, 2, 4, 8]
-output_scale_list = [16, 32, 64, 128] if dataset_name == 'mipnerf' else [16, 32, 64]
-output_data_type_list = ['psnr', 'lpips', 'time']
+# output_scale_list = [16, 32, 64, 128] if dataset_name == 'mipnerf' else [16, 32, 64]
+output_scale_list = [3, 6, 12, 24, 48, 96]
+output_data_type_list = ['psnr', 'lpips', 'time'] if not short else ['psnr', 'time']
 
 def extract_scale(tag):
     scale_regex = re.compile(r'[/_]s(.*)\.0')
@@ -52,7 +64,7 @@ def extract_scale(tag):
 # load all data
 data_dict = {}
 for scene_name in scene_name_list:
-    scene_result_path = os.path.join(log_base_dir, scene_name, 'results.csv')
+    scene_result_path = os.path.join(log_base_dir, scene_name, result_file_name)
     # load
     with open(scene_result_path, 'r') as f:
         reader = csv.reader(f)
@@ -90,14 +102,14 @@ output_rows.append(['Metric'])
 for scale in output_scale_list:
     for data_type in output_data_type_list:
         if data_type == 'psnr':
-            title_str = r'PSNR$\uparrow$'
+            title_str = r'PSNR$\uparrow$' if not short else r'PSNR'
         elif data_type == 'lpips':
-            title_str = r'LPIPS$\downarrow$'
+            title_str = r'LPIPS$\downarrow$' if not short else r'LPIPS'
         elif data_type == 'time':
-            title_str = r'Time$\downarrow$'
+            title_str = r'Time$\downarrow$' if not short else r'Time'
         else:
             raise NotImplementedError
-        output_rows[-1].append(r'\small{' + title_str + r'}')
+        output_rows[-1].append(r'\small{' + title_str + r'}' if not short else r'\tiny{' + title_str + r'}')
 
 for row_idx, exp_idx in enumerate(exp_idx_list):
     exp_name = exp_name_list[exp_idx]
@@ -111,7 +123,11 @@ for row_idx, exp_idx in enumerate(exp_idx_list):
                 data_list.append(float(data))
             data_mean = sum(data_list) / len(data_list)
             if data_type == 'psnr':
-                data_str = f'{data_mean:.2f}'
+                if short:
+                    data_str = f'{data_mean:.1f}'
+                else:
+                    data_str = f'{data_mean:.2f}'
+
             elif data_type == 'lpips':
                 if data_mean == 0:
                     data_str = 'N.A.'

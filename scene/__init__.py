@@ -65,7 +65,16 @@ class Scene:
                 json.dump(json_cams, file)
 
         # cache cameras
-        camera_cache_name = f"cameras_{len(resolution_scales)}.pkl"
+        # check if the resolutions are all 2^n
+        is_normal_scales = True
+        for scale in resolution_scales:
+            if scale not in [2**i for i in range(len(resolution_scales))]:
+                is_normal_scales = False
+                break
+        if is_normal_scales:
+            camera_cache_name = f"cameras_{len(resolution_scales)}.pkl"
+        else:
+            camera_cache_name = f"cameras_({'-'.join([str(reso) for reso in resolution_scales])}).pkl"
         camera_cache_path = os.path.join(args.source_path, camera_cache_name)
         if os.path.exists(camera_cache_path):
             print("Loading cameras from cache")
