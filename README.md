@@ -9,7 +9,7 @@ If there is any issue with the instruction or the code,
 please feel free to drop me an email at `yan.zhiwen@u.nus.edu`.
 
 Thank you for your support and we welcome you to cite our paper at
-```json
+```bibtex
 @inproceedings{yan2024multi,
   title={Multi-scale 3d gaussian splatting for anti-aliased rendering},
   author={Yan, Zhiwen and Low, Weng Fei and Chen, Yu and Lee, Gim Hee},
