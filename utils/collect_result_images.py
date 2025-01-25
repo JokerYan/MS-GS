@@ -8,7 +8,7 @@ import tkinter as tk
 from tensorboard.backend.event_processing import event_accumulator
 
 # Path to the TensorBoard log directory
-log_base_dir = '/home/zwyan/3d_cv/repos/gaussian-splatting/output'
+log_base_dir = '//output'
 output_root = '/home/zwyan/3d_cv/papers/my papers/anti-aliasing/qualitatives'
 # scene_name_list = [
 #     "garden",

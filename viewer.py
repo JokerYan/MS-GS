@@ -43,8 +43,8 @@ def render_interactive(dataset: ModelParams, iteration: int, pipeline: PipelineP
         bg_color = [1,1,1] if dataset.white_background else [0, 0, 0]
         background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
 
-        # prune gaussians far from center
-        gaussians.filter_center(scene.cameras_extent)
+        # # prune gaussians far from center
+        # gaussians.filter_center(scene.cameras_extent)
 
         gaussians.pre_cat_feature()
 

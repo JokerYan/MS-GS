@@ -47,7 +47,7 @@ def crop_concat_add_text(image_paths, texts, output_path):
 
 
 # Example usage
-image_dir = '/home/zwyan/3d_cv/repos/gaussian-splatting/output/bicycle/base/viewer'
+image_dir = '//output/bicycle/base/viewer'
 image_names = ['23_1', '23_2', '23_3']
 image_paths = [os.path.join(image_dir, image_name + '.png') for image_name in image_names]
 texts = ["2x", "4x", "8x"]
